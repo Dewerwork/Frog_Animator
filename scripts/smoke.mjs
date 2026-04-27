@@ -122,6 +122,60 @@ await page.waitForTimeout(20);
 const at2 = await page.locator("text=/Frame \\d+ \\/ \\d+/").first().textContent();
 if (!/Frame 3 \/ 3/.test(at2?.trim() ?? "")) throw new Error(`insert blank failed, got "${at2}"`);
 
+// 8b) Drag-target-by-selection: pre-select the child Eye layer, then drag
+//     somewhere over the Body sprite. Drag should move the *Eye* (the
+//     LayerTree selection), not the hit sprite.
+const selectionDrag = await page.evaluate(() => {
+  // @ts-ignore
+  const store = window.__frogStore;
+  const layers = store.getState().project.scene.characters[0].layers;
+  const bodyId = layers.find((l) => l.parent === null).id;
+  const eyeId = layers.find((l) => l.parent === bodyId)?.id;
+  store.getState().setFrameIndex(0);
+  store.getState().clearEdits();
+  store.getState().setSelection([eyeId]);
+  return { bodyId, eyeId };
+});
+if (!selectionDrag.eyeId) throw new Error("selection-drag: child layer missing");
+
+await page.mouse.move(cx, cy);
+await page.mouse.down();
+await page.mouse.move(cx + 30, cy + 20, { steps: 3 });
+await page.mouse.move(cx + 80, cy + 50, { steps: 4 });
+await page.mouse.up();
+await page.waitForTimeout(50);
+
+const dragOutcome = await page.evaluate(() => {
+  // @ts-ignore
+  const s = window.__frogStore.getState();
+  return {
+    edits: s.editing.edits,
+    selection: s.selection,
+  };
+});
+if (!dragOutcome.edits[selectionDrag.eyeId]?.translation) {
+  throw new Error(
+    `drag-target: expected staged edit on eye (${selectionDrag.eyeId}), got ${JSON.stringify(dragOutcome.edits)}`,
+  );
+}
+if (dragOutcome.edits[selectionDrag.bodyId]) {
+  throw new Error(
+    `drag-target: body should NOT be staged when child was selected, got ${JSON.stringify(dragOutcome.edits[selectionDrag.bodyId])}`,
+  );
+}
+if (!dragOutcome.selection.includes(selectionDrag.eyeId)) {
+  throw new Error(
+    `drag-target: selection should still be eye after drag, got ${JSON.stringify(dragOutcome.selection)}`,
+  );
+}
+// Reset for downstream tests.
+await page.evaluate(() => {
+  // @ts-ignore
+  window.__frogStore.getState().clearEdits();
+  // @ts-ignore
+  window.__frogStore.getState().setSelection([]);
+});
+
 // 9) Project file round-trip. Serialize the live project (Zod-validated),
 //    parse it, deserialize it back, serialize the result, and assert the two
 //    serializations are byte-identical. That's the actual stable-storage
@@ -741,6 +795,7 @@ console.log(
 console.log(
   `  View: selection sticks ✓ clampToCanvas flag toggles ✓ camera world-pos=(${view.worldBody.x.toFixed(1)},${view.worldBody.y.toFixed(1)})`,
 );
+console.log(`  Drag-target: pre-selected child got the drag (eye edit staged, body untouched)`);
 
 await browser.close();
 server.close();

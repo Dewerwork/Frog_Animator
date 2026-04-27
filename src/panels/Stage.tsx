@@ -21,7 +21,15 @@ type ScaleCorner = "tl" | "tr" | "bl" | "br";
 interface DragState {
   kind: DragKind;
   pointerId: number;
+  /** The layer being moved — for translate drags this can differ from the
+   *  sprite that received pointerdown (we honor the LayerTree selection
+   *  rather than what's under the cursor). */
   layerId: string;
+  /** The sprite the user clicked on. Used by pointerup to set selection
+   *  on a click that didn't turn into a drag. */
+  hitLayerId?: string;
+  /** True after the first pointermove past the click threshold. */
+  moved?: boolean;
   /** Pointer position at drag start, in PARENT-LOCAL coords (= the container the sprite lives in). */
   startParent: Vec2;
   startTranslation: Vec2;
@@ -383,32 +391,42 @@ export function Stage() {
   }
 
   function attachDrag(sprite: Sprite, layer: Layer) {
+    // Translate drag rule: clicks select; drags move the *currently selected*
+    // layer (LayerTree wins, not the sprite under the cursor). Lets the user
+    // pre-select a parent in the tree and drag freely over its children.
     sprite.on("pointerdown", (e: FederatedPointerEvent) => {
       const handles = handlesRef.current;
       if (!handles) return;
-      const parent = sprite.parent;
-      if (!parent) return;
-      // Stop the event from bubbling to ancestor sprites — when a child layer
-      // is parented to its parent layer's Sprite, Pixi fires pointerdown on
-      // both, and the parent's handler would otherwise overwrite selection.
+      // Stop bubbling so ancestor sprites don't overwrite drag state.
       e.stopPropagation();
-      const startParent = parent.toLocal(e.global);
       const s = useStore.getState();
       if (!s.project) return;
 
+      // Pick the layer to actually drag.
+      const selectedLayerId = s.selection.find(
+        (t) => typeof t === "string" && !t.includes(":"),
+      ) as string | undefined;
+      const targetLayerId = selectedLayerId ?? layer.id;
+      const targetSprite = composeStateRef.current.sprites.get(targetLayerId);
+      const targetLayer = findLayer(targetLayerId);
+      if (!targetSprite || !targetLayer || !targetSprite.parent) return;
+
+      const startParent = targetSprite.parent.toLocal(e.global);
       const pose = resolvePose(s.project, s.currentFrameIndex);
-      const cur = pose[layer.id as TargetId];
+      const cur = pose[targetLayerId as TargetId];
       if (!cur) return;
-      const editedTranslation = s.editing.edits[layer.id as TargetId]?.translation ?? cur.translation;
+      const editedTranslation =
+        s.editing.edits[targetLayerId as TargetId]?.translation ?? cur.translation;
 
       dragRef.current = {
         kind: "translate",
         pointerId: e.pointerId,
-        layerId: layer.id,
+        layerId: targetLayerId,
+        hitLayerId: layer.id,
+        moved: false,
         startParent: { x: startParent.x, y: startParent.y },
         startTranslation: { x: editedTranslation.x, y: editedTranslation.y },
       };
-      s.setSelection([layer.id as TargetId]);
       sprite.cursor = "grabbing";
     });
 
@@ -416,19 +434,28 @@ export function Stage() {
       const drag = dragRef.current;
       const handles = handlesRef.current;
       if (!drag || !handles || drag.pointerId !== e.pointerId) return;
-      if (drag.kind !== "translate" || drag.layerId !== layer.id) return;
-      const parent = sprite.parent;
-      if (!parent) return;
+      if (drag.kind !== "translate") return;
 
-      const cur = parent.toLocal(e.global);
+      // Each sprite has its own globalpointermove handler. The drag target's
+      // sprite is responsible for actually applying the update — others bail.
+      if (drag.layerId !== layer.id) return;
+
+      const targetSprite = composeStateRef.current.sprites.get(drag.layerId);
+      const targetLayer = findLayer(drag.layerId);
+      if (!targetSprite || !targetLayer || !targetSprite.parent) return;
+
+      const cur = targetSprite.parent.toLocal(e.global);
       const dx = cur.x - drag.startParent.x;
       const dy = cur.y - drag.startParent.y;
+      // Suppress accidental jitter clicks: only count it as a drag once the
+      // pointer has moved at least 2 parent-local pixels.
+      if (Math.abs(dx) + Math.abs(dy) > 2) drag.moved = true;
       let next: Vec2 = {
         x: drag.startTranslation.x + dx,
         y: drag.startTranslation.y + dy,
       };
-      next = clampTranslation(next, layer.constraints?.translation);
-      next = clampInsideCanvasIfNeeded(sprite, layer, next);
+      next = clampTranslation(next, targetLayer.constraints?.translation);
+      next = clampInsideCanvasIfNeeded(targetSprite, targetLayer, next);
 
       const s = useStore.getState();
       if (s.mode === "rig") {
@@ -441,6 +468,12 @@ export function Stage() {
     const endDrag = (e: FederatedPointerEvent) => {
       const drag = dragRef.current;
       if (drag && drag.pointerId === e.pointerId && drag.kind === "translate") {
+        // A click without movement = "select what was clicked". A click that
+        // moved was a drag of the previously-selected layer; don't mess with
+        // selection.
+        if (!drag.moved && drag.hitLayerId) {
+          useStore.getState().setSelection([drag.hitLayerId as TargetId]);
+        }
         dragRef.current = null;
       }
       sprite.cursor = "grab";
