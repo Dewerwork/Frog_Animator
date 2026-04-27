@@ -16,6 +16,7 @@ import { usePlaybackLoop } from "@/state/playback";
 import { useAutosave } from "@/project/autosave";
 import { newProject, openProject } from "@/project/open";
 import { saveProject, saveProjectAs } from "@/project/save";
+import { redo, undo } from "@/state/history";
 
 export function App() {
   usePlaybackLoop();
@@ -74,6 +75,23 @@ export function App() {
       "$mod+Shift+KeyS": (e) => {
         e.preventDefault();
         void saveProjectAs();
+      },
+      "$mod+KeyZ": (e) => {
+        e.preventDefault();
+        undo();
+      },
+      "$mod+Shift+KeyZ": (e) => {
+        e.preventDefault();
+        redo();
+      },
+      "$mod+KeyY": (e) => {
+        // Windows-friendly redo alias.
+        e.preventDefault();
+        redo();
+      },
+      "$mod+KeyD": (e) => {
+        e.preventDefault();
+        useStore.getState().duplicateFrame();
       },
     });
     return () => unbind();

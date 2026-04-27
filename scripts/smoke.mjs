@@ -60,9 +60,9 @@ if (!canvasInfo) throw new Error("canvas missing");
 if (canvasInfo.w < 100 || canvasInfo.h < 100) throw new Error(`canvas too small ${JSON.stringify(canvasInfo)}`);
 
 // 2) Frame counter shows "1 / 1" initially.
-const frameLabel0 = await page.locator("text=/\\d+ \\/ \\d+/").first().textContent();
-if (!/^1 \/ 1$/.test(frameLabel0?.trim() ?? "")) {
-  throw new Error(`expected "1 / 1", got "${frameLabel0}"`);
+const frameLabel0 = await page.locator("text=/Frame \\d+ \\/ \\d+/").first().textContent();
+if (!/Frame 1 \/ 1/.test(frameLabel0?.trim() ?? "")) {
+  throw new Error(`expected "Frame 1 / 1", got "${frameLabel0}"`);
 }
 
 // 3) Drag the frog from canvas-center+0 to canvas-center+(150,80).
@@ -88,8 +88,8 @@ const stagedAfterDrag = await page.evaluate(() => {
 // 5) Press Space to capture, expect "2 / 2".
 await page.keyboard.press("Space");
 await page.waitForTimeout(50);
-const frameLabel1 = await page.locator("text=/\\d+ \\/ \\d+/").first().textContent();
-if (!/^2 \/ 2$/.test(frameLabel1?.trim() ?? "")) {
+const frameLabel1 = await page.locator("text=/Frame \\d+ \\/ \\d+/").first().textContent();
+if (!/Frame 2 \/ 2/.test(frameLabel1?.trim() ?? "")) {
   throw new Error(`expected "2 / 2" after capture, got "${frameLabel1}"`);
 }
 
@@ -111,16 +111,16 @@ if (!layerDelta?.translation) throw new Error("frame[1] missing layer-frog-body 
 // 7) ArrowLeft → frame 0, ArrowRight → frame 1, transitions are applied.
 await page.keyboard.press("ArrowLeft");
 await page.waitForTimeout(20);
-const at0 = await page.locator("text=/\\d+ \\/ \\d+/").first().textContent();
-if (!/^1 \/ 2$/.test(at0?.trim() ?? "")) throw new Error(`scrub back failed, got "${at0}"`);
+const at0 = await page.locator("text=/Frame \\d+ \\/ \\d+/").first().textContent();
+if (!/Frame 1 \/ 2/.test(at0?.trim() ?? "")) throw new Error(`scrub back failed, got "${at0}"`);
 await page.keyboard.press("ArrowRight");
 await page.waitForTimeout(20);
 
 // 8) "B" inserts a blank frame.
 await page.keyboard.press("KeyB");
 await page.waitForTimeout(20);
-const at2 = await page.locator("text=/\\d+ \\/ \\d+/").first().textContent();
-if (!/^3 \/ 3$/.test(at2?.trim() ?? "")) throw new Error(`insert blank failed, got "${at2}"`);
+const at2 = await page.locator("text=/Frame \\d+ \\/ \\d+/").first().textContent();
+if (!/Frame 3 \/ 3/.test(at2?.trim() ?? "")) throw new Error(`insert blank failed, got "${at2}"`);
 
 // 9) Project file round-trip. Serialize the live project (Zod-validated),
 //    parse it, deserialize it back, serialize the result, and assert the two
@@ -306,8 +306,129 @@ if (onion.before === 0 || onion.after === 0) {
   throw new Error(`onion: expected ghost sprites in both containers, got ${JSON.stringify(onion)}`);
 }
 
+// 15) M5 undo/redo: a captured frame is undoable; redo restores it.
+//     The capture commits patches via produceWithPatches.
+const undoRedo = await page.evaluate(() => {
+  // @ts-ignore
+  const { undo, redo } = window.__frogHistory;
+  // @ts-ignore
+  const store = window.__frogStore;
+  const before = store.getState().project.scene.frames.length;
+  store.getState().clearEdits();
+  store.getState().stageEdit(
+    store.getState().project.scene.characters[0].layers[0].id,
+    { rotation: 0.5 },
+  );
+  store.getState().captureFrame("selected");
+  const afterCapture = store.getState().project.scene.frames.length;
+  undo();
+  const afterUndo = store.getState().project.scene.frames.length;
+  redo();
+  const afterRedo = store.getState().project.scene.frames.length;
+  return { before, afterCapture, afterUndo, afterRedo };
+});
+if (
+  undoRedo.afterCapture !== undoRedo.before + 1 ||
+  undoRedo.afterUndo !== undoRedo.before ||
+  undoRedo.afterRedo !== undoRedo.before + 1
+) {
+  throw new Error(`undo/redo broken: ${JSON.stringify(undoRedo)}`);
+}
+
+// 16) M5 frame ops: duplicate / delete / move all work and survive
+//     round-trip through serialize. Move keeps the right currentFrameIndex.
+const frameOps = await page.evaluate(() => {
+  // @ts-ignore
+  const store = window.__frogStore;
+  const start = store.getState().project.scene.frames.length;
+
+  store.getState().setFrameIndex(0);
+  store.getState().duplicateFrame();
+  const afterDup = store.getState().project.scene.frames.length;
+  const dupIdx = store.getState().currentFrameIndex; // should be 1 (just inserted)
+
+  store.getState().moveFrame(1, 0);
+  const afterMove = store.getState().currentFrameIndex; // moveFrame sets to=0
+
+  store.getState().deleteFrame(0);
+  const afterDelete = store.getState().project.scene.frames.length;
+
+  return { start, afterDup, dupIdx, afterMove, afterDelete };
+});
+if (frameOps.afterDup !== frameOps.start + 1) {
+  throw new Error(`duplicate broken: ${JSON.stringify(frameOps)}`);
+}
+if (frameOps.dupIdx !== 1) {
+  throw new Error(`duplicate didn't advance index: ${JSON.stringify(frameOps)}`);
+}
+if (frameOps.afterMove !== 0) {
+  throw new Error(`move didn't update index: ${JSON.stringify(frameOps)}`);
+}
+if (frameOps.afterDelete !== frameOps.start) {
+  throw new Error(`delete returned wrong count: ${JSON.stringify(frameOps)}`);
+}
+
+// 17) M5 invariant check: plant a dangling frame target via partial-merge
+//     setState (so action functions survive), trigger any commit-style
+//     action, and verify validateInvariants emits a console error mentioning
+//     the bogus key.
+const invariantSpy = await page.evaluate(() => {
+  // @ts-ignore
+  const store = window.__frogStore;
+  const orig = console.error;
+  const seen = [];
+  console.error = (...args) => {
+    seen.push(args.map(String).join(" "));
+    orig.apply(console, args);
+  };
+  // Partial merge: replace only `project` so the action functions stay.
+  store.setState((s) => ({
+    project: {
+      ...s.project,
+      scene: {
+        ...s.project.scene,
+        frames: s.project.scene.frames.map((f, idx) =>
+          idx === 0
+            ? { ...f, layers: { ...f.layers, __bogus__: { translation: { x: 1, y: 1 } } } }
+            : f,
+        ),
+      },
+    },
+  }));
+  // Trigger a commit-style action so validate runs.
+  store
+    .getState()
+    .setOnionSkin({ enabled: store.getState().project.settings.onionSkin.enabled });
+  console.error = orig;
+  // Restore.
+  store.setState((s) => ({
+    project: {
+      ...s.project,
+      scene: {
+        ...s.project.scene,
+        frames: s.project.scene.frames.map((f, idx) =>
+          idx === 0
+            ? {
+                ...f,
+                layers: Object.fromEntries(
+                  Object.entries(f.layers).filter(([k]) => k !== "__bogus__"),
+                ),
+              }
+            : f,
+        ),
+      },
+    },
+  }));
+  return seen.filter((m) => m.includes("invariant") && m.includes("__bogus__"));
+});
+if (invariantSpy.length === 0) {
+  throw new Error("invariant check did not flag dangling target");
+}
+
 if (errs.length) {
-  throw new Error("page produced errors:\n" + errs.join("\n"));
+  // Filter out the invariant test's intentional warnings.
+  const real = errs.filter((m) => !m.includes("__bogus__"));
+  if (real.length) throw new Error("page produced errors:\n" + real.join("\n"));
 }
 
 console.log("Smoke test passed.");
@@ -318,6 +439,13 @@ console.log(`  Hierarchy: parent +100x → child world dx=${dxEye.toFixed(1)}`);
 console.log(`  Variant capture: ${JSON.stringify(variantCapture.capturedDelta)}`);
 console.log(`  Z capture: z=${zCapture}`);
 console.log(`  Onion ghosts: before=${onion.before}, after=${onion.after}`);
+console.log(
+  `  Undo/redo: before=${undoRedo.before}, capture=${undoRedo.afterCapture}, undo=${undoRedo.afterUndo}, redo=${undoRedo.afterRedo}`,
+);
+console.log(
+  `  Frame ops: dup=${frameOps.afterDup}, dupIdx=${frameOps.dupIdx}, moveIdx=${frameOps.afterMove}, del=${frameOps.afterDelete}`,
+);
+console.log(`  Invariant: caught ${invariantSpy.length} dangling-key error(s)`);
 
 await browser.close();
 server.close();

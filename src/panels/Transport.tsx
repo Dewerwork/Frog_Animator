@@ -1,10 +1,13 @@
 import { useStore } from "@/state/store";
 import { frameCount } from "@/state/selectors";
+import { redo, undo } from "@/state/history";
 
 export function Transport() {
   const playing = useStore((s) => s.playing);
   const togglePlay = useStore((s) => s.togglePlay);
   const insertBlank = useStore((s) => s.insertBlank);
+  const duplicateFrame = useStore((s) => s.duplicateFrame);
+  const deleteFrame = useStore((s) => s.deleteFrame);
   const captureFrame = useStore((s) => s.captureFrame);
   const project = useStore((s) => s.project);
   const i = useStore((s) => s.currentFrameIndex);
@@ -72,6 +75,36 @@ export function Transport() {
         title="Insert blank frame (B)"
       >
         + Blank
+      </button>
+      <button
+        onClick={() => duplicateFrame()}
+        className="rounded border border-edge px-2 py-1"
+        title="Duplicate current frame (Ctrl/Cmd+D)"
+      >
+        Dup
+      </button>
+      <button
+        onClick={() => deleteFrame()}
+        disabled={total <= 1}
+        className="rounded border border-edge px-2 py-1 disabled:opacity-30"
+        title="Delete current frame"
+      >
+        Del
+      </button>
+      <span className="mx-2 h-5 border-l border-edge" />
+      <button
+        onClick={() => undo()}
+        className="rounded border border-edge px-2 py-1"
+        title="Undo (Ctrl/Cmd+Z)"
+      >
+        ↶
+      </button>
+      <button
+        onClick={() => redo()}
+        className="rounded border border-edge px-2 py-1"
+        title="Redo (Ctrl/Cmd+Shift+Z)"
+      >
+        ↷
       </button>
     </div>
   );
