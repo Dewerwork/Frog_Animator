@@ -2,7 +2,7 @@
 // non-builtin asset so compose() can resolve textures synchronously.
 // Also decodes every AudioTrack so the playback engine can schedule them.
 
-import { Texture } from "pixi.js";
+import { Assets } from "pixi.js";
 
 import type { AssetRef, Project } from "@/model/types";
 import { audioRuntime } from "@/audio/runtime";
@@ -17,11 +17,11 @@ const PEAKS_PER_SECOND = 80;
 async function loadOne(projectRoot: string, ref: AssetRef): Promise<void> {
   if (isBuiltin(ref.assetId)) return;
   if (getCached(ref)) return;
-  // Resolve the absolute path on disk, then hand it to Pixi as a URL via
-  // Tauri's asset protocol. No bytes cross the IPC boundary for the texture.
   const absPath = await ipc.assetPath(projectRoot, ref.assetId, ref.file);
   const url = convertFileSrc(absPath);
-  const tex = await Texture.from(url);
+  // Pixi v8: Assets.load actually fetches+decodes; Texture.from is for
+  // already-cached ids and returns a placeholder otherwise.
+  const tex = await Assets.load(url);
   setCached(ref, tex);
 }
 

@@ -2,7 +2,7 @@
 // Tauri asset URL with the change mtime so the renderer fetches fresh
 // bytes, then swaps the cached Pixi Texture in place.
 
-import { Texture } from "pixi.js";
+import { Assets } from "pixi.js";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 import { convertFileSrc, ipc, inTauri } from "@/ipc/tauri";
@@ -27,10 +27,10 @@ export async function startHotReload(): Promise<void> {
 
     try {
       const absPath = await ipc.assetPath(projectRoot, assetId, file);
-      // Cache-bust both the browser fetch cache and Pixi's TextureSource
-      // cache. We use a fresh URL each reload.
+      // Cache-bust both the browser fetch cache and Pixi's Assets cache.
+      // Each reload uses a fresh URL so Assets.load actually re-fetches.
       const url = `${convertFileSrc(absPath)}?t=${mtimeMs}`;
-      const tex = await Texture.from(url);
+      const tex = await Assets.load(url);
       setCached({ assetId, file }, tex);
       // Force a redraw by tickling the store. We use setSelection to its
       // current value to avoid changing observable behavior.

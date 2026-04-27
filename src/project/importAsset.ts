@@ -1,5 +1,5 @@
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { Texture } from "pixi.js";
+import { Assets } from "pixi.js";
 import { ulid } from "ulid";
 
 import { convertFileSrc, ipc, inTauri } from "@/ipc/tauri";
@@ -34,7 +34,9 @@ export async function importAssetForActiveLayer(): Promise<void> {
 
   const imported = await ipc.assetImport(s.projectRoot, picked);
   const url = convertFileSrc(imported.absPath);
-  const tex = await Texture.from(url);
+  // Pixi v8: Assets.load actually fetches and decodes; Texture.from(url) looks
+  // the URL up as a cache id and returns a placeholder if not pre-registered.
+  const tex = await Assets.load(url);
   setCached({ assetId: imported.assetId, file: imported.file }, tex);
   useStore.getState().addWardrobeVariant(
     layerId,
