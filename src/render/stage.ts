@@ -27,8 +27,11 @@ export async function createStage(canvas: HTMLCanvasElement, width: number, heig
   const onionBefore = new Container();
   const current = new Container();
   const onionAfter = new Container();
-  onionBefore.alpha = 0.4;
-  onionAfter.alpha = 0.4;
+  // Per-sprite alpha is set during compose; container alpha stays at 1 so the
+  // toggle can fully hide ghosts by setting visible = false.
+  onionBefore.label = "onion-before";
+  current.label = "current";
+  onionAfter.label = "onion-after";
 
   app.stage.addChild(onionBefore, current, onionAfter);
 

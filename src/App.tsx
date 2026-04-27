@@ -27,6 +27,10 @@ export function App() {
         e.preventDefault();
         useStore.getState().captureFrame("all");
       },
+      "Shift+Space": (e) => {
+        e.preventDefault();
+        useStore.getState().captureFrame("selected");
+      },
       "\\": (e) => {
         e.preventDefault();
         useStore.getState().togglePlay();

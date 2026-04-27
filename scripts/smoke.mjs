@@ -227,6 +227,85 @@ if (Math.abs(dxEye - 100) > 1) {
   );
 }
 
+// 12) M4 wardrobe variant swap: clicking a different variant in the
+//     Wardrobe panel stages a variantId edit. Capture-selected then writes
+//     ONLY that delta (since only that target has a staged edit), with no
+//     translation field. We synthesize the staging directly through the
+//     store to keep the test deterministic across UI layout changes.
+const variantCapture = await page.evaluate(async () => {
+  // @ts-ignore
+  const store = window.__frogStore;
+  // Add a second variant on the body layer.
+  const bodyId = store.getState().project.scene.characters[0].layers[0].id;
+  store.getState().addWardrobeVariant(
+    bodyId,
+    { id: "test-variant", name: "Test", assetId: "builtin:placeholder", file: "p.png" },
+    false,
+  );
+  // Move to frame 0 and select the body.
+  store.getState().setFrameIndex(0);
+  store.getState().setSelection([bodyId]);
+  store.getState().clearEdits();
+  store.getState().stageEdit(bodyId, { variantId: "test-variant" });
+  store.getState().captureFrame("selected");
+
+  const s = store.getState();
+  const idx = s.currentFrameIndex;
+  return {
+    capturedDelta: s.project.scene.frames[idx]?.layers?.[bodyId],
+    stagedAfter: Object.keys(s.editing.edits).length,
+    bodyId,
+    framesInProject: s.project.scene.frames.length,
+  };
+});
+if (!variantCapture.capturedDelta?.variantId) {
+  throw new Error(`variant capture: missing variantId, got ${JSON.stringify(variantCapture.capturedDelta)}`);
+}
+if (variantCapture.capturedDelta.translation) {
+  throw new Error("variant capture: translation should NOT be in selected-capture delta");
+}
+if (variantCapture.stagedAfter !== 0) {
+  throw new Error(`variant capture: editing buffer not cleared (${variantCapture.stagedAfter} keys remain)`);
+}
+
+// 13) M4 per-frame z: stage z=+5, capture, scrub off and back, expect z honored.
+const zCapture = await page.evaluate(() => {
+  // @ts-ignore
+  const store = window.__frogStore;
+  const bodyId = variantCaptureBodyId();
+  store.getState().clearEdits();
+  store.getState().stageEdit(bodyId, { z: 5 });
+  store.getState().captureFrame("selected");
+  const idx = store.getState().currentFrameIndex;
+  return store.getState().project.scene.frames[idx]?.layers?.[bodyId]?.z;
+  function variantCaptureBodyId() {
+    return store.getState().project.scene.characters[0].layers[0].id;
+  }
+});
+if (zCapture !== 5) throw new Error(`z capture: expected 5, got ${zCapture}`);
+
+// 14) M4 onion skin: enable, scrub to a middle frame, ghost compose states
+//     should mount sprites in the onion containers.
+const onion = await page.evaluate(async () => {
+  // @ts-ignore
+  const store = window.__frogStore;
+  store.getState().setOnionSkin({ enabled: true, before: 1, after: 1 });
+  // Move to a frame with neighbors on both sides.
+  const frames = store.getState().project.scene.frames.length;
+  store.getState().setFrameIndex(Math.floor(frames / 2));
+  await new Promise((r) => requestAnimationFrame(() => r(null)));
+  await new Promise((r) => requestAnimationFrame(() => r(null)));
+
+  // @ts-ignore
+  const counts = window.__getOnionCounts?.();
+  store.getState().setOnionSkin({ enabled: false });
+  return counts;
+});
+if (!onion) throw new Error("onion: probe missing");
+if (onion.before === 0 || onion.after === 0) {
+  throw new Error(`onion: expected ghost sprites in both containers, got ${JSON.stringify(onion)}`);
+}
+
 if (errs.length) {
   throw new Error("page produced errors:\n" + errs.join("\n"));
 }
@@ -236,6 +315,9 @@ console.log("  Drag staged:", JSON.stringify(stagedAfterDrag));
 console.log("  Captured delta:", JSON.stringify(layerDelta));
 console.log(`  Round-trip: ${json1.length} bytes, stable across re-serialize`);
 console.log(`  Hierarchy: parent +100x → child world dx=${dxEye.toFixed(1)}`);
+console.log(`  Variant capture: ${JSON.stringify(variantCapture.capturedDelta)}`);
+console.log(`  Z capture: z=${zCapture}`);
+console.log(`  Onion ghosts: before=${onion.before}, after=${onion.after}`);
 
 await browser.close();
 server.close();

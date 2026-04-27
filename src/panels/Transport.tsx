@@ -55,9 +55,16 @@ export function Transport() {
       <button
         onClick={() => captureFrame("all")}
         className="rounded border border-accent bg-accent/20 px-2 py-1 text-accent"
-        title="Capture frame (Space)"
+        title="Capture all changed targets (Space)"
       >
         Capture
+      </button>
+      <button
+        onClick={() => captureFrame("selected")}
+        className="rounded border border-edge px-2 py-1"
+        title="Capture only the selected layer's edits (Shift+Space)"
+      >
+        Capture sel.
       </button>
       <button
         onClick={insertBlank}

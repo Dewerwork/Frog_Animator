@@ -55,6 +55,12 @@ export interface AppState {
     variant: { id: string; name: string; assetId: string; file: string },
     select?: boolean,
   ) => void;
+  /** Rename a wardrobe variant. */
+  renameWardrobeVariant: (layerId: string, variantId: string, name: string) => void;
+  /** Delete a wardrobe variant; refuses to delete the layer's last variant. */
+  deleteWardrobeVariant: (layerId: string, variantId: string) => boolean;
+  /** Set the layer's rest defaultVariantId (rig mode). */
+  setLayerDefaultVariant: (layerId: string, variantId: string) => void;
 
   /** Insert a new layer under `parent` (null = top-level). Returns the new id. */
   addLayer: (characterId: string, parent: string | null, name?: string) => string | null;
@@ -77,6 +83,15 @@ export interface AppState {
   captureFrame: (mode: "all" | "selected") => void;
   /** Insert an empty frame after currentFrameIndex (== "hold previous"). */
   insertBlank: () => void;
+
+  /** Update onion-skin settings. */
+  setOnionSkin: (patch: Partial<{
+    enabled: boolean;
+    before: number;
+    after: number;
+    tintBefore: number;
+    tintAfter: number;
+  }>) => void;
 }
 
 function eq(a: unknown, b: unknown): boolean {
@@ -285,6 +300,61 @@ export const useStore = create<AppState>((set) => ({
       ),
     ),
 
+  renameWardrobeVariant: (layerId, variantId, name) =>
+    set(
+      produce(
+        dirty((s: AppState) => {
+          forEachLayer(s, layerId, (l) => {
+            const v = l.wardrobe.find((w) => w.id === variantId);
+            if (v) v.name = name;
+          });
+        }),
+      ),
+    ),
+
+  deleteWardrobeVariant: (layerId, variantId) => {
+    let ok = false;
+    set(
+      produce(
+        dirty((s: AppState) => {
+          forEachLayer(s, layerId, (l) => {
+            if (l.wardrobe.length <= 1) return;
+            const idx = l.wardrobe.findIndex((w) => w.id === variantId);
+            if (idx < 0) return;
+            l.wardrobe.splice(idx, 1);
+            // If the removed variant was the rest default, fall back to the
+            // first remaining variant.
+            if (l.rest.defaultVariantId === variantId) {
+              l.rest.defaultVariantId = l.wardrobe[0]!.id;
+            }
+            // Strip frame deltas referencing the dead variant.
+            if (s.project) {
+              for (const f of s.project.scene.frames) {
+                const d = f.layers[layerId];
+                if (d && d.variantId === variantId) delete d.variantId;
+              }
+            }
+            ok = true;
+          });
+        }),
+      ),
+    );
+    return ok;
+  },
+
+  setLayerDefaultVariant: (layerId, variantId) =>
+    set(
+      produce(
+        dirty((s: AppState) => {
+          forEachLayer(s, layerId, (l) => {
+            if (l.wardrobe.some((w) => w.id === variantId)) {
+              l.rest.defaultVariantId = variantId;
+            }
+          });
+        }),
+      ),
+    ),
+
   addLayer: (characterId, parent, name = "Layer") => {
     let id: string | null = null;
     set(
@@ -483,6 +553,16 @@ export const useStore = create<AppState>((set) => ({
           s.project.scene.frames.splice(s.currentFrameIndex + 1, 0, { id: ulid(), layers: {} });
           s.currentFrameIndex += 1;
           s.editing.edits = {};
+        }),
+      ),
+    ),
+
+  setOnionSkin: (patch) =>
+    set(
+      produce(
+        dirty((s: AppState) => {
+          if (!s.project) return;
+          Object.assign(s.project.settings.onionSkin, patch);
         }),
       ),
     ),

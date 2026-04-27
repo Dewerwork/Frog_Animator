@@ -28,6 +28,7 @@ export function Stage() {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const handlesRef = useRef<StageHandles | null>(null);
   const composeStateRef = useRef<ComposeState>(createComposeState());
+  const onionStatesRef = useRef<Map<number, ComposeState>>(new Map());
   const dragRef = useRef<DragState | null>(null);
   const pivotHandleRef = useRef<Graphics | null>(null);
 
@@ -52,13 +53,26 @@ export function Stage() {
       drawNow();
     });
 
-    // Smoke-test hook: read sprite world position by layer id.
-    (window as unknown as { __getSpriteWorldPos?: (id: string) => { x: number; y: number } | null })
-      .__getSpriteWorldPos = (id: string) => {
+    // Smoke-test hooks. Tauri webview is sealed; safe to expose internals.
+    type DebugWindow = {
+      __getSpriteWorldPos?: (id: string) => { x: number; y: number } | null;
+      __getOnionCounts?: () => { before: number; after: number };
+    };
+    const win = window as unknown as DebugWindow;
+    win.__getSpriteWorldPos = (id: string) => {
       const sp = composeStateRef.current.sprites.get(id);
       if (!sp) return null;
       const g = sp.getGlobalPosition();
       return { x: g.x, y: g.y };
+    };
+    win.__getOnionCounts = () => {
+      let before = 0;
+      let after = 0;
+      for (const [offset, st] of onionStatesRef.current) {
+        if (offset < 0) before += st.sprites.size;
+        else if (offset > 0) after += st.sprites.size;
+      }
+      return { before, after };
     };
 
     return () => {
@@ -67,6 +81,7 @@ export function Stage() {
       handlesRef.current = null;
       canvas.remove();
       composeStateRef.current = createComposeState();
+      onionStatesRef.current.clear();
       pivotHandleRef.current = null;
     };
   }, []);
@@ -103,7 +118,83 @@ export function Stage() {
       attachDrag(sprite, layer);
     });
 
+    composeOnion(handles, s);
     updatePivotHandle();
+  }
+
+  function composeOnion(handles: StageHandles, s: ReturnType<typeof useStore.getState>) {
+    if (!s.project) return;
+    const cfg = s.project.settings.onionSkin;
+    const states = onionStatesRef.current;
+
+    // Tear down everything if disabled.
+    if (!cfg.enabled || (cfg.before === 0 && cfg.after === 0)) {
+      handles.onionBefore.visible = false;
+      handles.onionAfter.visible = false;
+      for (const [, st] of states) {
+        for (const sp of st.sprites.values()) {
+          sp.removeFromParent();
+          sp.destroy({ children: true });
+        }
+        for (const cr of st.charRoots.values()) {
+          cr.removeFromParent();
+          cr.destroy({ children: true });
+        }
+      }
+      states.clear();
+      return;
+    }
+    handles.onionBefore.visible = true;
+    handles.onionAfter.visible = true;
+
+    const total = s.project.scene.frames.length;
+    const wanted = new Set<number>();
+    for (let k = 1; k <= cfg.before; k++) {
+      const idx = s.currentFrameIndex - k;
+      if (idx >= 0) wanted.add(-k);
+    }
+    for (let k = 1; k <= cfg.after; k++) {
+      const idx = s.currentFrameIndex + k;
+      if (idx < total) wanted.add(k);
+    }
+
+    // Drop unused offsets.
+    for (const [offset, st] of states) {
+      if (!wanted.has(offset)) {
+        for (const sp of st.sprites.values()) {
+          sp.removeFromParent();
+          sp.destroy({ children: true });
+        }
+        for (const cr of st.charRoots.values()) {
+          cr.removeFromParent();
+          cr.destroy({ children: true });
+        }
+        states.delete(offset);
+      }
+    }
+
+    for (const offset of wanted) {
+      let st = states.get(offset);
+      if (!st) {
+        st = createComposeState();
+        states.set(offset, st);
+      }
+      const root = offset < 0 ? handles.onionBefore : handles.onionAfter;
+      const idx = s.currentFrameIndex + offset;
+      const ghostPose = resolvePose(s.project, idx);
+      composeInto(root, s.project, ghostPose, st);
+
+      const tint = offset < 0 ? cfg.tintBefore : cfg.tintAfter;
+      const dist = Math.abs(offset);
+      const span = offset < 0 ? Math.max(1, cfg.before) : Math.max(1, cfg.after);
+      const alpha = 0.55 * (1 - (dist - 1) / span); // closest = 0.55, fades out
+      for (const sp of st.sprites.values()) {
+        sp.tint = tint;
+        sp.alpha = Math.max(0.1, alpha);
+        sp.eventMode = "none"; // ghosts must not intercept clicks
+        sp.cursor = "default";
+      }
+    }
   }
 
   function findLayer(layerId: string): Layer | null {
