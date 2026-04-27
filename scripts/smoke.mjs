@@ -500,6 +500,36 @@ if (audio.afterUndo3?.offsetSeconds !== 0.25 || audio.afterUndo3.gainDb !== -3 |
   throw new Error(`audio: undo didn't restore initial (${JSON.stringify(audio.afterUndo3)})`);
 }
 
+// 19) M7 rasterizer: build an offscreen Pixi app at the project canvas
+//     resolution, render frame 0 of the live project, and verify we get
+//     back valid PNG bytes (8-byte PNG magic + a sensible size).
+const raster = await page.evaluate(async () => {
+  // @ts-ignore
+  const { createRasterizer, rasterizeFrame } = window.__frogRasterize;
+  // @ts-ignore
+  const project = window.__frogStore.getState().project;
+  const rast = await createRasterizer(project.scene.canvas.width, project.scene.canvas.height);
+  try {
+    const bytes = await rasterizeFrame(rast, project, 0);
+    // PNG magic: 89 50 4E 47 0D 0A 1A 0A
+    const magic = [137, 80, 78, 71, 13, 10, 26, 10];
+    const head = Array.from(bytes.slice(0, 8));
+    return {
+      length: bytes.length,
+      magicOk: magic.every((v, i) => v === head[i]),
+      head,
+    };
+  } finally {
+    rast.destroy();
+  }
+});
+if (!raster.magicOk) {
+  throw new Error(`rasterize: bad PNG header ${JSON.stringify(raster.head)}`);
+}
+if (raster.length < 200) {
+  throw new Error(`rasterize: PNG suspiciously small (${raster.length} bytes)`);
+}
+
 if (errs.length) {
   // Filter out the invariant test's intentional warnings.
   const real = errs.filter((m) => !m.includes("__bogus__"));
@@ -524,6 +554,7 @@ console.log(`  Invariant: caught ${invariantSpy.length} dangling-key error(s)`);
 console.log(
   `  Audio: addTrack ✓ mutate ✓ round-trip ✓ undo restored ${audio.afterUndo3?.offsetSeconds}s offset, ${audio.afterUndo3?.gainDb}dB`,
 );
+console.log(`  Rasterize: ${raster.length} byte PNG with valid magic`);
 
 await browser.close();
 server.close();

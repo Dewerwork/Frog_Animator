@@ -36,13 +36,19 @@ export const ipc = {
   audioPath: (projectRoot: string, trackId: string, file: string) =>
     invoke<string>("audio_path", { projectRoot, trackId, file }),
   watchAssets: (projectRoot: string) => invoke<void>("watch_assets", { projectRoot }),
-  exportStart: (req: {
-    projectRoot: string;
+  exportStart: (req: { tmpOverride?: string }) =>
+    invoke<{ jobId: string; tmpDir: string; framesDir: string }>("export_start", { req }),
+  exportWriteFrame: (jobId: string, frameIdx: number, bytes: Uint8Array) =>
+    invoke<string>("export_write_frame", { jobId, frameIdx, bytes: Array.from(bytes) }),
+  exportFinalize: (req: {
+    jobId: string;
     outPath: string;
     fps: number;
     width: number;
     height: number;
-  }) => invoke<string>("export_start", { req }),
+    audio: Array<{ absPath: string; offsetSeconds: number; gain: number }>;
+    frameCount: number;
+  }) => invoke<void>("export_finalize", { req }),
   exportCancel: (jobId: string) => invoke<void>("export_cancel", { jobId }),
 };
 

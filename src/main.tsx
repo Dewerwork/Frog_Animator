@@ -5,6 +5,7 @@ import { App } from "@/App";
 import { useStore } from "@/state/store";
 import { deserialize, serialize } from "@/project/serialize";
 import { canRedo, canUndo, redo, undo } from "@/state/history";
+import { createRasterizer, rasterizeFrame } from "@/export/rasterize";
 import "@/index.css";
 
 // Exposed for smoke tests and devtools. The Tauri webview is sealed, so
@@ -13,11 +14,13 @@ type DebugWindow = {
   __frogStore: typeof useStore;
   __frogProject: { serialize: typeof serialize; deserialize: typeof deserialize };
   __frogHistory: { undo: typeof undo; redo: typeof redo; canUndo: typeof canUndo; canRedo: typeof canRedo };
+  __frogRasterize: { createRasterizer: typeof createRasterizer; rasterizeFrame: typeof rasterizeFrame };
 };
 const dbg = window as unknown as DebugWindow;
 dbg.__frogStore = useStore;
 dbg.__frogProject = { serialize, deserialize };
 dbg.__frogHistory = { undo, redo, canUndo, canRedo };
+dbg.__frogRasterize = { createRasterizer, rasterizeFrame };
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>

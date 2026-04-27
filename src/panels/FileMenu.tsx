@@ -1,11 +1,15 @@
+import { useState } from "react";
+
 import { useStore } from "@/state/store";
 import { newProject, openProject } from "@/project/open";
 import { saveProject, saveProjectAs } from "@/project/save";
 import { importAssetForActiveLayer } from "@/project/importAsset";
+import { ExportDialog } from "@/panels/ExportDialog";
 
 export function FileMenu() {
   const projectPath = useStore((s) => s.projectPath);
   const dirty = useStore((s) => s.dirtyTick > s.lastSavedTick);
+  const [exportOpen, setExportOpen] = useState(false);
 
   const labelSave = projectPath ? "Save" : "Save…";
   const titleBar = projectPath ? projectPath.split(/[\\/]/).pop() : "(unsaved)";
@@ -47,10 +51,19 @@ export function FileMenu() {
       >
         Import PNG…
       </button>
+      <button
+        onClick={() => setExportOpen(true)}
+        className="rounded border border-edge px-2 py-1"
+        title="Export video (Ctrl+E)"
+      >
+        Export…
+      </button>
       <span className="ml-2 truncate text-ink/60" title={projectPath ?? ""}>
         {titleBar}
         {dirty ? " •" : ""}
       </span>
+      {exportOpen ? <ExportDialog onClose={() => setExportOpen(false)} /> : null}
     </div>
   );
 }
+

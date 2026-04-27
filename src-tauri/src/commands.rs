@@ -5,7 +5,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use tauri::{AppHandle, State};
 
+use crate::export::{run_ffmpeg, write_frame_png, ExportRegistry, FinalizeRequest};
 use crate::fs_atomic::write_atomic;
 
 #[derive(Debug, thiserror::Error)]
@@ -169,21 +171,90 @@ pub async fn watch_assets(_project_root: PathBuf) -> CmdResult<()> {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ExportRequest {
-    pub project_root: PathBuf,
-    pub out_path: PathBuf,
-    pub fps: u32,
-    pub width: u32,
-    pub height: u32,
+pub struct ExportStartReq {
+    /// Optional override for the temporary directory (tests). If None, uses
+    /// std::env::temp_dir()/frog-animator-export-<ulid>.
+    pub tmp_override: Option<PathBuf>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportStartResp {
+    pub job_id: String,
+    pub tmp_dir: PathBuf,
+    pub frames_dir: PathBuf,
 }
 
 #[tauri::command]
-pub async fn export_start(_req: ExportRequest) -> CmdResult<String> {
-    // TODO(M7): spawn ffmpeg sidecar, return jobId.
-    Err(CmdError::NotImplemented("export_start"))
+pub async fn export_start(
+    req: ExportStartReq,
+    registry: State<'_, ExportRegistry>,
+) -> CmdResult<ExportStartResp> {
+    let tmp = match req.tmp_override {
+        Some(p) => {
+            fs::create_dir_all(&p)?;
+            p
+        }
+        None => {
+            let base = std::env::temp_dir()
+                .join(format!("frog-animator-export-{}", ulid::Ulid::new()));
+            fs::create_dir_all(&base)?;
+            base
+        }
+    };
+    let job = registry.create(tmp)?;
+    let j = job.lock().unwrap();
+    Ok(ExportStartResp {
+        job_id: j.job_id.clone(),
+        tmp_dir: j.tmp_dir.clone(),
+        frames_dir: j.frames_dir.clone(),
+    })
 }
 
 #[tauri::command]
-pub async fn export_cancel(_job_id: String) -> CmdResult<()> {
-    Err(CmdError::NotImplemented("export_cancel"))
+pub async fn export_write_frame(
+    job_id: String,
+    frame_idx: u32,
+    bytes: Vec<u8>,
+    registry: State<'_, ExportRegistry>,
+) -> CmdResult<PathBuf> {
+    let job = registry
+        .get(&job_id)
+        .ok_or_else(|| CmdError::InvalidPath(format!("unknown job {job_id}")))?;
+    Ok(write_frame_png(&job, frame_idx, &bytes)?)
+}
+
+#[tauri::command]
+pub async fn export_finalize(
+    req: FinalizeRequest,
+    app: AppHandle,
+    registry: State<'_, ExportRegistry>,
+) -> CmdResult<()> {
+    let job = registry
+        .get(&req.job_id)
+        .ok_or_else(|| CmdError::InvalidPath(format!("unknown job {}", req.job_id)))?;
+    run_ffmpeg(&job, &req, &app)
+        .map_err(|e| CmdError::InvalidPath(format!("ffmpeg failed: {e}")))?;
+
+    // Best-effort cleanup. Leave the tmp dir on error so the user can debug.
+    let tmp = job.lock().unwrap().tmp_dir.clone();
+    let _ = fs::remove_dir_all(&tmp);
+    registry.drop_job(&req.job_id);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn export_cancel(
+    job_id: String,
+    registry: State<'_, ExportRegistry>,
+) -> CmdResult<()> {
+    let Some(job) = registry.get(&job_id) else {
+        return Ok(());
+    };
+    let mut j = job.lock().unwrap();
+    j.cancelled = true;
+    if let Some(child) = j.child.as_mut() {
+        let _ = child.kill();
+    }
+    Ok(())
 }
