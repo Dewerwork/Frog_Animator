@@ -68,6 +68,8 @@ export function composeInto(
       charRoot.visible = rootPose.visible;
     }
 
+    // First pass: ensure a Sprite exists for every layer in this character so
+    // children can find their parent in pass two.
     for (const layer of character.layers) {
       seenLayers.add(layer.id);
       const lp = pose[layer.id as TargetId];
@@ -79,8 +81,8 @@ export function composeInto(
         sprite.label = `layer:${layer.id}`;
         sprite.eventMode = "static";
         sprite.cursor = "grab";
+        sprite.sortableChildren = true;
         state.sprites.set(layer.id, sprite);
-        // Parented later this pass.
         if (onSpriteCreated) onSpriteCreated({ sprite, layer });
       } else {
         const tex = resolveTexture(layer, lp.variantId);
@@ -97,10 +99,20 @@ export function composeInto(
       sprite.scale.set(lp.scale.x, lp.scale.y);
       sprite.visible = lp.visible;
       sprite.zIndex = lp.z;
+    }
 
-      // Reparent to character root (M3 will support layer-to-layer parenting).
-      const desiredParent = charRoot;
-      if (sprite.parent !== desiredParent) desiredParent.addChild(sprite);
+    // Second pass: parent each sprite to either its parent layer's sprite or
+    // the character root. Cycles in `parent` are guarded against with a depth
+    // budget — store actions also reject cycle-creating reparents.
+    for (const layer of character.layers) {
+      const sprite = state.sprites.get(layer.id);
+      if (!sprite) continue;
+      let desired: Container = charRoot;
+      if (layer.parent) {
+        const parentSprite = state.sprites.get(layer.parent);
+        if (parentSprite) desired = parentSprite;
+      }
+      if (sprite.parent !== desired) desired.addChild(sprite);
     }
 
     charRoot.sortableChildren = true;

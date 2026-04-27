@@ -172,6 +172,61 @@ const migrationGuards = await page.evaluate(() => {
 });
 if (migrationGuards.length) throw new Error(migrationGuards.join("; "));
 
+// 11) M3 hierarchy: the seeded project has Body → Eye Highlight. Eye is
+//     parented to Body in body-local space at (-33, -38). When we mutate
+//     Body's rest.translation, Eye's world position should track because
+//     compose() parents its sprite to Body's sprite.
+//
+// Scrub to frame 0 first — later frames carry translation overrides for
+// the body that would mask any rest-pose change.
+const heirarchy = await page.evaluate(async () => {
+  // @ts-ignore
+  const store = window.__frogStore;
+  const layers = store.getState().project.scene.characters[0].layers;
+  const bodyId = layers.find((l) => l.parent === null).id;
+  const eyeId = layers.find((l) => l.parent === bodyId)?.id;
+  if (!eyeId) return { error: "child layer not seeded" };
+
+  store.getState().setFrameIndex(0);
+  store.getState().setMode("rig");
+
+  await new Promise((r) => requestAnimationFrame(() => r(null)));
+  await new Promise((r) => requestAnimationFrame(() => r(null)));
+  // @ts-ignore
+  const eyeSpriteBefore = window.__getSpriteWorldPos?.(eyeId);
+  // @ts-ignore
+  const bodySpriteBefore = window.__getSpriteWorldPos?.(bodyId);
+
+  store.getState().setLayerRestTranslation(bodyId, { x: 740, y: 360 });
+  await new Promise((r) => requestAnimationFrame(() => r(null)));
+  await new Promise((r) => requestAnimationFrame(() => r(null)));
+  // @ts-ignore
+  const eyeSpriteAfter = window.__getSpriteWorldPos?.(eyeId);
+  // @ts-ignore
+  const bodySpriteAfter = window.__getSpriteWorldPos?.(bodyId);
+
+  // Restore for downstream tests.
+  store.getState().setLayerRestTranslation(bodyId, { x: 640, y: 360 });
+  store.getState().setMode("animate");
+
+  return { eyeSpriteBefore, eyeSpriteAfter, bodySpriteBefore, bodySpriteAfter };
+});
+
+if (heirarchy.error) throw new Error(`hierarchy: ${heirarchy.error}`);
+if (!heirarchy.eyeSpriteBefore || !heirarchy.eyeSpriteAfter) {
+  throw new Error("hierarchy: world-pos probe missing");
+}
+const dxBody = heirarchy.bodySpriteAfter.x - heirarchy.bodySpriteBefore.x;
+const dxEye = heirarchy.eyeSpriteAfter.x - heirarchy.eyeSpriteBefore.x;
+if (Math.abs(dxBody - 100) > 1) {
+  throw new Error(`hierarchy: body did not move (expected 100, got ${dxBody})`);
+}
+if (Math.abs(dxEye - 100) > 1) {
+  throw new Error(
+    `hierarchy: child sprite did not track parent (expected dx≈100, got ${dxEye})`,
+  );
+}
+
 if (errs.length) {
   throw new Error("page produced errors:\n" + errs.join("\n"));
 }
@@ -180,6 +235,7 @@ console.log("Smoke test passed.");
 console.log("  Drag staged:", JSON.stringify(stagedAfterDrag));
 console.log("  Captured delta:", JSON.stringify(layerDelta));
 console.log(`  Round-trip: ${json1.length} bytes, stable across re-serialize`);
+console.log(`  Hierarchy: parent +100x → child world dx=${dxEye.toFixed(1)}`);
 
 await browser.close();
 server.close();

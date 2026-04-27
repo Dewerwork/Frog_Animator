@@ -5,7 +5,15 @@ import { create } from "zustand";
 import { produce } from "immer";
 import { ulid } from "ulid";
 
-import type { Character, Frame, Project, TargetId, FrameLayerState } from "@/model/types";
+import type {
+  Character,
+  Frame,
+  Layer,
+  Project,
+  TargetId,
+  FrameLayerState,
+  Vec2,
+} from "@/model/types";
 import { resolvePose } from "@/rig/resolve";
 import { allTargetIds } from "@/state/selectors";
 
@@ -47,6 +55,19 @@ export interface AppState {
     variant: { id: string; name: string; assetId: string; file: string },
     select?: boolean,
   ) => void;
+
+  /** Insert a new layer under `parent` (null = top-level). Returns the new id. */
+  addLayer: (characterId: string, parent: string | null, name?: string) => string | null;
+  deleteLayer: (layerId: string) => void;
+  /** Move `layerId` under `newParent` (null = top-level). Rejects cycles. */
+  reparentLayer: (layerId: string, newParent: string | null) => boolean;
+  /** Mutate the layer's rest pose (rig mode). */
+  setLayerRestTranslation: (layerId: string, translation: Vec2) => void;
+  setLayerRestRotation: (layerId: string, rotation: number) => void;
+  /** Move pivot in image-local pixels and compensate rest.translation so the
+   *  sprite stays put visually. */
+  setLayerPivot: (layerId: string, pivot: Vec2, translationCompensation?: Vec2) => void;
+  renameLayer: (layerId: string, name: string) => void;
 
   /** Stage a sparse delta into the editing buffer. */
   stageEdit: (target: TargetId, patch: FrameLayerState) => void;
@@ -108,8 +129,10 @@ export const BUILTIN_FROG_ASSET = "builtin:frog";
 
 function defaultFrog(): Character {
   const charId = "char-frog";
-  const layerId = "layer-frog-body";
-  const variantId = "variant-frog-default";
+  const bodyId = "layer-frog-body";
+  const eyeId = "layer-frog-eye";
+  const bodyVariant = "variant-frog-body";
+  const eyeVariant = "variant-frog-eye";
   return {
     id: charId,
     name: "Frog",
@@ -120,7 +143,7 @@ function defaultFrog(): Character {
     },
     layers: [
       {
-        id: layerId,
+        id: bodyId,
         name: "Body",
         parent: null,
         // Pivot at image center — texture is 256x256 procedurally.
@@ -130,14 +153,37 @@ function defaultFrog(): Character {
           rotation: 0,
           scale: { x: 1, y: 1 },
           visible: true,
-          defaultVariantId: variantId,
+          defaultVariantId: bodyVariant,
           defaultZ: 0,
         },
         wardrobe: [
           {
-            id: variantId,
+            id: bodyVariant,
             name: "Default",
-            asset: { assetId: BUILTIN_FROG_ASSET, file: "frog.png" },
+            asset: { assetId: "builtin:frog", file: "frog.png" },
+          },
+        ],
+      },
+      // Demonstration child: a small "eye highlight" parented to Body. Its
+      // rest.translation is in BODY-LOCAL space (offset from body's anchor).
+      {
+        id: eyeId,
+        name: "Eye Highlight",
+        parent: bodyId,
+        pivot: { x: 32, y: 32 },
+        rest: {
+          translation: { x: -33, y: -38 },
+          rotation: 0,
+          scale: { x: 0.35, y: 0.35 },
+          visible: true,
+          defaultVariantId: eyeVariant,
+          defaultZ: 1,
+        },
+        wardrobe: [
+          {
+            id: eyeVariant,
+            name: "Default",
+            asset: { assetId: "builtin:eye", file: "eye.png" },
           },
         ],
       },
@@ -174,6 +220,17 @@ function dirty(
     recipe(s);
     s.dirtyTick += 1;
   };
+}
+
+function forEachLayer(s: AppState, layerId: string, fn: (l: Layer) => void): void {
+  if (!s.project) return;
+  for (const c of s.project.scene.characters) {
+    const layer = c.layers.find((l) => l.id === layerId);
+    if (layer) {
+      fn(layer);
+      return;
+    }
+  }
 }
 
 export const useStore = create<AppState>((set) => ({
@@ -224,6 +281,164 @@ export const useStore = create<AppState>((set) => ({
             if (select) layer.rest.defaultVariantId = variant.id;
             return;
           }
+        }),
+      ),
+    ),
+
+  addLayer: (characterId, parent, name = "Layer") => {
+    let id: string | null = null;
+    set(
+      produce(
+        dirty((s: AppState) => {
+          if (!s.project) return;
+          const char = s.project.scene.characters.find((c) => c.id === characterId);
+          if (!char) return;
+          if (parent && !char.layers.some((l) => l.id === parent)) return;
+          id = ulid();
+          const variantId = ulid();
+          const newLayer: Layer = {
+            id,
+            name,
+            parent,
+            pivot: { x: 128, y: 128 },
+            rest: {
+              translation: { x: 0, y: 0 },
+              rotation: 0,
+              scale: { x: 1, y: 1 },
+              visible: true,
+              defaultVariantId: variantId,
+              defaultZ: 0,
+            },
+            wardrobe: [
+              {
+                id: variantId,
+                name: "Empty",
+                asset: { assetId: "builtin:placeholder", file: "placeholder.png" },
+              },
+            ],
+          };
+          char.layers.push(newLayer);
+        }),
+      ),
+    );
+    return id;
+  },
+
+  deleteLayer: (layerId) =>
+    set(
+      produce(
+        dirty((s: AppState) => {
+          if (!s.project) return;
+          for (const c of s.project.scene.characters) {
+            const idx = c.layers.findIndex((l) => l.id === layerId);
+            if (idx < 0) continue;
+            // Collect descendants so we can purge them and any frame deltas.
+            const toDelete = new Set<string>([layerId]);
+            let added = true;
+            while (added) {
+              added = false;
+              for (const l of c.layers) {
+                if (l.parent && toDelete.has(l.parent) && !toDelete.has(l.id)) {
+                  toDelete.add(l.id);
+                  added = true;
+                }
+              }
+            }
+            c.layers = c.layers.filter((l) => !toDelete.has(l.id));
+            for (const f of s.project.scene.frames) {
+              for (const id of toDelete) delete f.layers[id];
+            }
+            // Drop selection / staged edits referencing deleted layers.
+            s.selection = s.selection.filter((t) => !toDelete.has(t));
+            for (const id of toDelete) delete s.editing.edits[id];
+            return;
+          }
+        }),
+      ),
+    ),
+
+  reparentLayer: (layerId, newParent) => {
+    let ok = false;
+    set(
+      produce(
+        dirty((s: AppState) => {
+          if (!s.project) return;
+          for (const c of s.project.scene.characters) {
+            const layer = c.layers.find((l) => l.id === layerId);
+            if (!layer) continue;
+            if (newParent === layerId) return;
+            // Reject if newParent is a descendant of layerId (would create a cycle).
+            if (newParent) {
+              const descendants = new Set<string>([layerId]);
+              let added = true;
+              while (added) {
+                added = false;
+                for (const l of c.layers) {
+                  if (l.parent && descendants.has(l.parent) && !descendants.has(l.id)) {
+                    descendants.add(l.id);
+                    added = true;
+                  }
+                }
+              }
+              if (descendants.has(newParent)) return;
+              if (!c.layers.some((l) => l.id === newParent)) return;
+            }
+            layer.parent = newParent;
+            ok = true;
+            return;
+          }
+        }),
+      ),
+    );
+    return ok;
+  },
+
+  setLayerRestTranslation: (layerId, translation) =>
+    set(
+      produce(
+        dirty((s: AppState) => {
+          forEachLayer(s, layerId, (l) => {
+            l.rest.translation = { ...translation };
+          });
+        }),
+      ),
+    ),
+
+  setLayerRestRotation: (layerId, rotation) =>
+    set(
+      produce(
+        dirty((s: AppState) => {
+          forEachLayer(s, layerId, (l) => {
+            l.rest.rotation = rotation;
+          });
+        }),
+      ),
+    ),
+
+  setLayerPivot: (layerId, pivot, translationCompensation) =>
+    set(
+      produce(
+        dirty((s: AppState) => {
+          forEachLayer(s, layerId, (l) => {
+            l.pivot = { ...pivot };
+            if (translationCompensation) {
+              l.rest.translation = {
+                x: l.rest.translation.x + translationCompensation.x,
+                y: l.rest.translation.y + translationCompensation.y,
+              };
+            }
+          });
+        }),
+      ),
+    ),
+
+  renameLayer: (layerId, name) =>
+    set(
+      produce(
+        dirty((s: AppState) => {
+          forEachLayer(s, layerId, (l) => {
+            l.name = name;
+          });
         }),
       ),
     ),
