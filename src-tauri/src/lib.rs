@@ -8,6 +8,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .manage(export::ExportRegistry::new())
+        .manage(watch::WatcherState::new())
         .invoke_handler(tauri::generate_handler![
             commands::project_open,
             commands::project_create,

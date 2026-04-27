@@ -530,6 +530,33 @@ if (raster.length < 200) {
   throw new Error(`rasterize: PNG suspiciously small (${raster.length} bytes)`);
 }
 
+// 20) M8 resolved-pose cache: same (project, frameIndex, dirtyTick) returns
+//     a referentially-stable pose; bumping dirtyTick blows the cache;
+//     cache holds N entries after N distinct frame requests.
+const cache = await page.evaluate(() => {
+  // @ts-ignore
+  const { resolvePoseCached, resolvedPoseCacheSize, clearResolvedPoseCache } =
+    window.__frogResolve;
+  // @ts-ignore
+  const store = window.__frogStore;
+  const s = store.getState();
+  clearResolvedPoseCache();
+  const a1 = resolvePoseCached(s.project, 0, s.dirtyTick);
+  const a2 = resolvePoseCached(s.project, 0, s.dirtyTick);
+  const sameRef = a1 === a2;
+  resolvePoseCached(s.project, 1, s.dirtyTick);
+  resolvePoseCached(s.project, 2, s.dirtyTick);
+  const size = resolvedPoseCacheSize();
+
+  // Bump dirtyTick by performing a commit-style action.
+  store.getState().setOnionSkin({ enabled: store.getState().project.settings.onionSkin.enabled });
+  const a3 = resolvePoseCached(store.getState().project, 0, store.getState().dirtyTick);
+  return { sameRef, size, blownAfterDirty: a3 !== a1 };
+});
+if (!cache.sameRef) throw new Error("cache: same key returned new ref");
+if (cache.size !== 3) throw new Error(`cache: expected 3 entries, got ${cache.size}`);
+if (!cache.blownAfterDirty) throw new Error("cache: dirtyTick bump didn't invalidate");
+
 if (errs.length) {
   // Filter out the invariant test's intentional warnings.
   const real = errs.filter((m) => !m.includes("__bogus__"));
@@ -555,6 +582,9 @@ console.log(
   `  Audio: addTrack ✓ mutate ✓ round-trip ✓ undo restored ${audio.afterUndo3?.offsetSeconds}s offset, ${audio.afterUndo3?.gainDb}dB`,
 );
 console.log(`  Rasterize: ${raster.length} byte PNG with valid magic`);
+console.log(
+  `  Pose cache: same-ref ✓ size=${cache.size} ✓ invalidated on dirtyTick ✓`,
+);
 
 await browser.close();
 server.close();

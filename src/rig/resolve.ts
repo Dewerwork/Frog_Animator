@@ -83,3 +83,41 @@ export function resolvePose(project: Project, frameIndex: number): ResolvedPose 
   }
   return pose;
 }
+
+// ── resolved-pose cache ────────────────────────────────────────────────────
+//
+// resolvePose is O(framesUpTo × targetsPerFrame). Onion skinning (which
+// touches several frames per redraw) and Properties (which touches every
+// keystroke) call into it constantly. We memoize per (dirtyTick, frameIndex):
+// any project mutation bumps dirtyTick, blowing the cache; pure scrubbing /
+// staged-edit interactions keep the cache hot.
+
+interface CacheEntry {
+  dirtyTick: number;
+  poses: Map<number, ResolvedPose>;
+}
+
+let cache: CacheEntry | null = null;
+
+export function resolvePoseCached(
+  project: Project,
+  frameIndex: number,
+  dirtyTick: number,
+): ResolvedPose {
+  if (!cache || cache.dirtyTick !== dirtyTick) {
+    cache = { dirtyTick, poses: new Map() };
+  }
+  const hit = cache.poses.get(frameIndex);
+  if (hit) return hit;
+  const pose = resolvePose(project, frameIndex);
+  cache.poses.set(frameIndex, pose);
+  return pose;
+}
+
+export function resolvedPoseCacheSize(): number {
+  return cache?.poses.size ?? 0;
+}
+
+export function clearResolvedPoseCache(): void {
+  cache = null;
+}

@@ -1,6 +1,6 @@
 import type { Layer, TargetId } from "@/model/types";
 import { useStore } from "@/state/store";
-import { resolvePose } from "@/rig/resolve";
+import { resolvePoseCached } from "@/rig/resolve";
 
 function findLayer(layerId: string): Layer | null {
   const project = useStore.getState().project;
@@ -35,7 +35,8 @@ export function Properties() {
 
   const layer = findLayer(target);
   if (!layer) return null;
-  const inherited = resolvePose(project, currentFrameIndex)[target as TargetId];
+  const dirtyTick = useStore.getState().dirtyTick;
+  const inherited = resolvePoseCached(project, currentFrameIndex, dirtyTick)[target as TargetId];
   if (!inherited) return null;
 
   const eb = editing.edits[target as TargetId];

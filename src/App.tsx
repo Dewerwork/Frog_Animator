@@ -18,10 +18,27 @@ import { useAutosave } from "@/project/autosave";
 import { newProject, openProject } from "@/project/open";
 import { saveProject, saveProjectAs } from "@/project/save";
 import { redo, undo } from "@/state/history";
+import { startHotReload, startWatching, stopHotReload } from "@/render/hotReload";
 
 export function App() {
   usePlaybackLoop();
   useAutosave();
+
+  // Hot-reload subscription is global — set up once. The watcher itself
+  // (per-project root) is started by openProject().
+  useEffect(() => {
+    void startHotReload();
+    return () => {
+      void stopHotReload();
+    };
+  }, []);
+
+  // Re-arm the asset watcher whenever the project root changes.
+  const projectRoot = useStore((s) => s.projectRoot);
+  useEffect(() => {
+    if (!projectRoot) return;
+    void startWatching(projectRoot);
+  }, [projectRoot]);
 
   useEffect(() => {
     const unbind = tinykeys(window, {

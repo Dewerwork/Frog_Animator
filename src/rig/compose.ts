@@ -23,10 +23,13 @@ export interface ComposeState {
   sprites: Map<string, Sprite>;
   /** Per-character container, keyed by Character.id. */
   charRoots: Map<string, Container>;
+  /** Background sprite, if any. */
+  bgSprite: Sprite | null;
+  bgId: string | null;
 }
 
 export function createComposeState(): ComposeState {
-  return { sprites: new Map(), charRoots: new Map() };
+  return { sprites: new Map(), charRoots: new Map(), bgSprite: null, bgId: null };
 }
 
 function resolveTexture(layer: Layer, variantId: string): Texture {
@@ -49,6 +52,53 @@ export function composeInto(
 ): void {
   const seenLayers = new Set<string>();
   const seenChars = new Set<string>();
+
+  // Sort root children by zIndex so backgrounds (negative z) sink under
+  // character roots. Cheap when nothing changes — Pixi short-circuits.
+  root.sortableChildren = true;
+
+  // Background, if any. Always parented to root and held at zIndex −1000 so
+  // it sits behind every character. Resolved pose may carry per-frame variant
+  // / translation overrides; treated symmetrically with layers.
+  const bg = project.scene.background;
+  if (bg) {
+    const bgPose = pose[`bg:${bg.id}` as TargetId];
+    const variant = bg.variants.find((v) => v.id === bgPose?.variantId) ?? bg.variants[0];
+    if (variant) {
+      const tex = isBuiltin(variant.asset.assetId)
+        ? getBuiltinTexture(variant.asset.assetId)
+        : (getCached(variant.asset) ?? Texture.EMPTY);
+      // Re-create if the active background id changed.
+      if (state.bgId !== bg.id || !state.bgSprite) {
+        if (state.bgSprite) {
+          state.bgSprite.removeFromParent();
+          state.bgSprite.destroy();
+        }
+        state.bgSprite = new Sprite(tex);
+        state.bgSprite.label = `bg:${bg.id}`;
+        state.bgSprite.eventMode = "none";
+        state.bgId = bg.id;
+        root.addChild(state.bgSprite);
+      } else if (state.bgSprite.texture !== tex) {
+        state.bgSprite.texture = tex;
+      }
+      const sp = state.bgSprite;
+      // Backgrounds are anchored top-left so a bg image fills the canvas
+      // naturally (translation defaults to (0,0)).
+      sp.anchor.set(0, 0);
+      sp.position.set(bgPose?.translation.x ?? 0, bgPose?.translation.y ?? 0);
+      sp.rotation = bgPose?.rotation ?? 0;
+      sp.scale.set(bgPose?.scale.x ?? 1, bgPose?.scale.y ?? 1);
+      sp.visible = bgPose?.visible ?? true;
+      sp.zIndex = bgPose?.z ?? -1000;
+      if (sp.parent !== root) root.addChild(sp);
+    }
+  } else if (state.bgSprite) {
+    state.bgSprite.removeFromParent();
+    state.bgSprite.destroy();
+    state.bgSprite = null;
+    state.bgId = null;
+  }
 
   for (const character of project.scene.characters) {
     seenChars.add(character.id);

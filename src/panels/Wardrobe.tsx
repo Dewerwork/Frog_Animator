@@ -5,7 +5,7 @@ import type { Layer, TargetId, WardrobeVariant } from "@/model/types";
 import { isBuiltin, getBuiltinTexture } from "@/render/builtin";
 import { getCached } from "@/render/textureCache";
 import { useStore } from "@/state/store";
-import { resolvePose } from "@/rig/resolve";
+import { resolvePoseCached } from "@/rig/resolve";
 import { importAssetForActiveLayer } from "@/project/importAsset";
 
 function useActiveLayer(): { layer: Layer; characterId: string } | null {
@@ -40,7 +40,9 @@ export function Wardrobe() {
     return <div className="h-full bg-panel2 p-2 text-xs text-ink/60">Select a layer.</div>;
   }
   const { layer } = active;
-  const inherited = resolvePose(project, currentFrameIndex)[layer.id as TargetId];
+  const inherited = resolvePoseCached(project, currentFrameIndex, useStore.getState().dirtyTick)[
+    layer.id as TargetId
+  ];
   const editVariant = editing.edits[layer.id as TargetId]?.variantId;
   const activeVariantId = editVariant ?? inherited?.variantId ?? layer.rest.defaultVariantId;
 

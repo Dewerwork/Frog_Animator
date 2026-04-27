@@ -5,7 +5,7 @@ import type { FederatedPointerEvent, Sprite } from "pixi.js";
 import { useStore } from "@/state/store";
 import { createStage, type StageHandles } from "@/render/stage";
 import { composeInto, createComposeState, type ComposeState } from "@/rig/compose";
-import { resolvePose } from "@/rig/resolve";
+import { resolvePose, resolvePoseCached } from "@/rig/resolve";
 import type { Layer, TargetId, Vec2 } from "@/model/types";
 
 type DragKind = "translate" | "pivot";
@@ -99,7 +99,7 @@ export function Stage() {
     const s = useStore.getState();
     if (!s.project) return;
 
-    const inherited = resolvePose(s.project, s.currentFrameIndex);
+    const inherited = resolvePoseCached(s.project, s.currentFrameIndex, s.dirtyTick);
     const display = { ...inherited };
     for (const [t, e] of Object.entries(s.editing.edits)) {
       const base = inherited[t as TargetId];
@@ -181,7 +181,7 @@ export function Stage() {
       }
       const root = offset < 0 ? handles.onionBefore : handles.onionAfter;
       const idx = s.currentFrameIndex + offset;
-      const ghostPose = resolvePose(s.project, idx);
+      const ghostPose = resolvePoseCached(s.project, idx, s.dirtyTick);
       composeInto(root, s.project, ghostPose, st);
 
       const tint = offset < 0 ? cfg.tintBefore : cfg.tintAfter;

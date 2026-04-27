@@ -9,6 +9,7 @@ use tauri::{AppHandle, State};
 
 use crate::export::{run_ffmpeg, write_frame_png, ExportRegistry, FinalizeRequest};
 use crate::fs_atomic::write_atomic;
+use crate::watch::{self, WatcherState};
 
 #[derive(Debug, thiserror::Error)]
 pub enum CmdError {
@@ -164,9 +165,14 @@ pub async fn audio_path(project_root: PathBuf, track_id: String, file: String) -
 }
 
 #[tauri::command]
-pub async fn watch_assets(_project_root: PathBuf) -> CmdResult<()> {
-    // TODO(M8): notify-debouncer-full → emit `assets:changed` events.
-    Err(CmdError::NotImplemented("watch_assets"))
+pub async fn watch_assets(
+    project_root: PathBuf,
+    app: AppHandle,
+    state: State<'_, WatcherState>,
+) -> CmdResult<()> {
+    watch::start(app, project_root, &state)
+        .map_err(|e| CmdError::InvalidPath(format!("watch failed: {e}")))?;
+    Ok(())
 }
 
 #[derive(Debug, Serialize, Deserialize)]
