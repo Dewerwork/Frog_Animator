@@ -10,6 +10,10 @@ export function Transport() {
   const duplicateFrame = useStore((s) => s.duplicateFrame);
   const deleteFrame = useStore((s) => s.deleteFrame);
   const captureFrame = useStore((s) => s.captureFrame);
+  const copySelectedFrames = useStore((s) => s.copySelectedFrames);
+  const pasteFramesInsert = useStore((s) => s.pasteFramesInsert);
+  const pasteFramesAppend = useStore((s) => s.pasteFramesAppend);
+  const selectedFrames = useStore((s) => s.selectedFrames);
   const project = useStore((s) => s.project);
   const i = useStore((s) => s.currentFrameIndex);
   const total = frameCount(project);
@@ -91,6 +95,27 @@ export function Transport() {
         title="Delete current frame"
       >
         Del
+      </button>
+      <button
+        onClick={() => copySelectedFrames()}
+        className="rounded border border-edge px-2 py-1"
+        title={`Copy frame${selectedFrames.length > 1 ? "s" : ""} (Ctrl/Cmd+C)`}
+      >
+        Copy{selectedFrames.length > 1 ? ` ${selectedFrames.length}` : ""}
+      </button>
+      <button
+        onClick={() => pasteFramesInsert()}
+        className="rounded border border-edge px-2 py-1"
+        title="Paste after current frame (Ctrl/Cmd+V)"
+      >
+        Paste
+      </button>
+      <button
+        onClick={() => pasteFramesAppend()}
+        className="rounded border border-edge px-2 py-1"
+        title="Paste at end of timeline (Ctrl/Cmd+Shift+V)"
+      >
+        Paste end
       </button>
       <span className="mx-2 h-5 border-l border-edge" />
       <button

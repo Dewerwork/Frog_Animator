@@ -49,12 +49,15 @@ function buildRows(project: Project): Row[] {
 export function Timeline() {
   const project = useStore((s) => s.project);
   const i = useStore((s) => s.currentFrameIndex);
+  const selectedFrames = useStore((s) => s.selectedFrames);
   const setFrameIndex = useStore((s) => s.setFrameIndex);
   const setSelection = useStore((s) => s.setSelection);
+  const toggleFrameSelection = useStore((s) => s.toggleFrameSelection);
   const moveFrame = useStore((s) => s.moveFrame);
 
   const total = frameCount(project);
   const rows = useMemo(() => (project ? buildRows(project) : []), [project]);
+  const selectedSet = useMemo(() => new Set(selectedFrames), [selectedFrames]);
 
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [dropIndex, setDropIndex] = useState<number | null>(null);
@@ -71,44 +74,58 @@ export function Timeline() {
       {/* Frame number header — also the drag-to-reorder handle. */}
       <div ref={scrollerRef} className="overflow-x-auto border-b border-edge">
         <div className="flex h-6" style={{ width: total * COL_W }}>
-          {Array.from({ length: total }, (_, idx) => (
-            <button
-              key={idx}
-              draggable
-              onClick={() => setFrameIndex(idx)}
-              onDragStart={(e) => {
-                setDragIndex(idx);
-                e.dataTransfer.effectAllowed = "move";
-                e.dataTransfer.setData("text/plain", String(idx));
-              }}
-              onDragOver={(e) => {
-                if (dragIndex === null || dragIndex === idx) return;
-                e.preventDefault();
-                e.dataTransfer.dropEffect = "move";
-                setDropIndex(idx);
-              }}
-              onDragLeave={() => {
-                if (dropIndex === idx) setDropIndex(null);
-              }}
-              onDrop={(e) => {
-                e.preventDefault();
-                if (dragIndex !== null) moveFrame(dragIndex, idx);
-                setDragIndex(null);
-                setDropIndex(null);
-              }}
-              onDragEnd={() => {
-                setDragIndex(null);
-                setDropIndex(null);
-              }}
-              className={`h-full shrink-0 border-r border-edge font-mono ${
-                idx === i ? "bg-accent/20 text-accent" : "text-ink/60 hover:bg-panel/60"
-              } ${dropIndex === idx ? "bg-accent/40" : ""}`}
-              style={{ width: COL_W }}
-              title={`Frame ${idx + 1} — drag to reorder`}
-            >
-              {(idx + 1) % 5 === 0 || idx === 0 ? idx + 1 : "·"}
-            </button>
-          ))}
+          {Array.from({ length: total }, (_, idx) => {
+            const isCurrent = idx === i;
+            const isSelected = selectedSet.has(idx);
+            return (
+              <button
+                key={idx}
+                draggable
+                onClick={(e) => {
+                  // Modifier-aware selection: shift = range, ctrl/cmd = toggle,
+                  // plain click = single + scrub.
+                  const mode = e.shiftKey ? "range" : (e.ctrlKey || e.metaKey) ? "toggle" : "single";
+                  toggleFrameSelection(idx, mode);
+                  if (mode === "single") setFrameIndex(idx);
+                }}
+                onDragStart={(e) => {
+                  setDragIndex(idx);
+                  e.dataTransfer.effectAllowed = "move";
+                  e.dataTransfer.setData("text/plain", String(idx));
+                }}
+                onDragOver={(e) => {
+                  if (dragIndex === null || dragIndex === idx) return;
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = "move";
+                  setDropIndex(idx);
+                }}
+                onDragLeave={() => {
+                  if (dropIndex === idx) setDropIndex(null);
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  if (dragIndex !== null) moveFrame(dragIndex, idx);
+                  setDragIndex(null);
+                  setDropIndex(null);
+                }}
+                onDragEnd={() => {
+                  setDragIndex(null);
+                  setDropIndex(null);
+                }}
+                className={`h-full shrink-0 border-r border-edge font-mono ${
+                  isCurrent
+                    ? "bg-accent/30 text-accent"
+                    : isSelected
+                    ? "bg-accent/15 text-ink"
+                    : "text-ink/60 hover:bg-panel/60"
+                } ${dropIndex === idx ? "outline outline-1 outline-accent" : ""}`}
+                style={{ width: COL_W }}
+                title={`Frame ${idx + 1} — click to select, shift/ctrl for range / toggle, drag to reorder`}
+              >
+                {(idx + 1) % 5 === 0 || idx === 0 ? idx + 1 : "·"}
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -141,9 +158,16 @@ export function Timeline() {
           className="relative"
           style={{ width: total * COL_W, height: rows.length * ROW_H }}
         >
-          {/* Vertical lane for current frame index. */}
+          {/* Vertical lanes: every selected frame, plus the current frame on top. */}
+          {selectedFrames.map((sIdx) => (
+            <div
+              key={`sel-${sIdx}`}
+              className="pointer-events-none absolute top-0 bg-accent/10"
+              style={{ left: sIdx * COL_W, width: COL_W, height: rows.length * ROW_H }}
+            />
+          ))}
           <div
-            className="pointer-events-none absolute top-0 bg-accent/10"
+            className="pointer-events-none absolute top-0 bg-accent/20"
             style={{ left: i * COL_W, width: COL_W, height: rows.length * ROW_H }}
           />
           {rows.map((r, ri) =>

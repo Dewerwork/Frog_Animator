@@ -24,6 +24,7 @@ import type {
 } from "@/model/types";
 import { resolvePose } from "@/rig/resolve";
 import { allTargetIds } from "@/state/selectors";
+import { clipboardLayers, clipboardSize, copyFrames as copyToClipboard } from "@/state/frameClipboard";
 
 enablePatches();
 
@@ -42,6 +43,9 @@ export interface AppState {
 
   currentFrameIndex: number;
   selection: TargetId[];
+  /** Multi-select on the timeline. Always sorted ascending, deduped. UI
+   *  state — never goes through commit() / autosave. */
+  selectedFrames: number[];
   mode: EditorMode;
   playing: boolean;
 
@@ -85,6 +89,19 @@ export interface AppState {
   duplicateFrame: (index?: number) => void;
   deleteFrame: (index?: number) => void;
   moveFrame: (from: number, to: number) => boolean;
+
+  setSelectedFrames: (indices: number[]) => void;
+  /** mode: "single" replaces; "toggle" adds/removes; "range" picks anchor
+   *  from selectedFrames[0] (or currentFrameIndex if empty) and selects
+   *  every index between. */
+  toggleFrameSelection: (idx: number, mode: "single" | "toggle" | "range") => void;
+  /** Copy currently-selected frames (or just currentFrameIndex if none).
+   *  Returns count copied. */
+  copySelectedFrames: () => number;
+  /** Paste cloned frames after currentFrameIndex. Returns count pasted. */
+  pasteFramesInsert: () => number;
+  /** Paste cloned frames at end of timeline. Returns count pasted. */
+  pasteFramesAppend: () => number;
 
   setOnionSkin: (patch: Partial<{
     enabled: boolean;
@@ -242,6 +259,10 @@ function forEachLayer(s: AppState, layerId: string, fn: (l: Layer) => void): voi
   }
 }
 
+function dedupeSorted(indices: number[]): number[] {
+  return Array.from(new Set(indices)).sort((a, b) => a - b);
+}
+
 // ── history (Immer patches) ────────────────────────────────────────────────
 
 interface HistoryEntry {
@@ -334,7 +355,7 @@ function commit(
 
 // ── store ──────────────────────────────────────────────────────────────────
 
-export const useStore = create<AppState>((set) => ({
+export const useStore = create<AppState>((set, get) => ({
   project: initialProject(),
   projectPath: null,
   projectRoot: null,
@@ -342,6 +363,7 @@ export const useStore = create<AppState>((set) => ({
   lastSavedTick: 0,
   currentFrameIndex: 0,
   selection: [],
+  selectedFrames: [],
   mode: "animate",
   playing: false,
   editing: { edits: {} },
@@ -354,6 +376,7 @@ export const useStore = create<AppState>((set) => ({
       projectRoot: root,
       currentFrameIndex: 0,
       selection: [],
+      selectedFrames: [],
       editing: { edits: {} },
       dirtyTick: 0,
       lastSavedTick: 0,
@@ -707,6 +730,84 @@ export const useStore = create<AppState>((set) => ({
       }),
     );
     return ok;
+  },
+
+  setSelectedFrames: (indices) =>
+    set({ selectedFrames: dedupeSorted(indices) }),
+
+  toggleFrameSelection: (idx, mode) =>
+    set((s) => {
+      if (!s.project) return s;
+      const total = s.project.scene.frames.length;
+      if (idx < 0 || idx >= total) return s;
+      if (mode === "single") {
+        return { selectedFrames: [idx], currentFrameIndex: idx };
+      }
+      if (mode === "toggle") {
+        const cur = s.selectedFrames;
+        const has = cur.includes(idx);
+        const next = has ? cur.filter((i) => i !== idx) : dedupeSorted([...cur, idx]);
+        return { selectedFrames: next };
+      }
+      // range
+      const anchor = s.selectedFrames[0] ?? s.currentFrameIndex;
+      const lo = Math.min(anchor, idx);
+      const hi = Math.max(anchor, idx);
+      const range: number[] = [];
+      for (let i = lo; i <= hi; i++) range.push(i);
+      return { selectedFrames: range, currentFrameIndex: idx };
+    }),
+
+  copySelectedFrames: () => {
+    const s = get();
+    if (!s.project) return 0;
+    const indices = s.selectedFrames.length > 0 ? s.selectedFrames : [s.currentFrameIndex];
+    const frames = indices
+      .map((i) => s.project!.scene.frames[i])
+      .filter((f): f is Frame => !!f);
+    return copyToClipboard(frames);
+  },
+
+  pasteFramesInsert: () => {
+    const n = clipboardSize();
+    if (n === 0) return 0;
+    set(
+      commit("pasteFramesInsert", (s) => {
+        if (!s.project) return;
+        const layers = clipboardLayers();
+        const newFrames: Frame[] = layers.map((l) => ({
+          id: ulid(),
+          layers: JSON.parse(JSON.stringify(l)),
+        }));
+        const insertAt = s.currentFrameIndex + 1;
+        s.project.scene.frames.splice(insertAt, 0, ...newFrames);
+        s.currentFrameIndex = insertAt + newFrames.length - 1;
+        s.selectedFrames = newFrames.map((_, i) => insertAt + i);
+        s.editing.edits = {};
+      }),
+    );
+    return n;
+  },
+
+  pasteFramesAppend: () => {
+    const n = clipboardSize();
+    if (n === 0) return 0;
+    set(
+      commit("pasteFramesAppend", (s) => {
+        if (!s.project) return;
+        const layers = clipboardLayers();
+        const startAt = s.project.scene.frames.length;
+        const newFrames: Frame[] = layers.map((l) => ({
+          id: ulid(),
+          layers: JSON.parse(JSON.stringify(l)),
+        }));
+        s.project.scene.frames.push(...newFrames);
+        s.currentFrameIndex = startAt + newFrames.length - 1;
+        s.selectedFrames = newFrames.map((_, i) => startAt + i);
+        s.editing.edits = {};
+      }),
+    );
+    return n;
   },
 
   setOnionSkin: (patch) =>

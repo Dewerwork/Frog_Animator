@@ -20,6 +20,16 @@ import { saveProject, saveProjectAs } from "@/project/save";
 import { redo, undo } from "@/state/history";
 import { startHotReload, startWatching, stopHotReload } from "@/render/hotReload";
 
+/** Whether an event target is a text-entry control we should NOT hijack
+ *  with global hotkeys. Lets the user type "v" inside a numeric input
+ *  without triggering paste-frames. */
+function isTextTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable) return true;
+  const tag = target.tagName;
+  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+}
+
 export function App() {
   usePlaybackLoop();
   useAutosave();
@@ -110,6 +120,21 @@ export function App() {
       "$mod+KeyD": (e) => {
         e.preventDefault();
         useStore.getState().duplicateFrame();
+      },
+      "$mod+KeyC": (e) => {
+        if (isTextTarget(e.target)) return;
+        e.preventDefault();
+        useStore.getState().copySelectedFrames();
+      },
+      "$mod+KeyV": (e) => {
+        if (isTextTarget(e.target)) return;
+        e.preventDefault();
+        useStore.getState().pasteFramesInsert();
+      },
+      "$mod+Shift+KeyV": (e) => {
+        if (isTextTarget(e.target)) return;
+        e.preventDefault();
+        useStore.getState().pasteFramesAppend();
       },
     });
     return () => unbind();

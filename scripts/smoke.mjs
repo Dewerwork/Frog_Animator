@@ -761,6 +761,94 @@ if (view.restAfter.x !== -500) {
 }
 if (!view.worldBody) throw new Error("camera probe missing");
 
+// 23) Frame multi-select + copy + paste-insert + paste-append.
+const clipboard = await page.evaluate(() => {
+  // @ts-ignore
+  const store = window.__frogStore;
+
+  // Build a known timeline shape: capture three distinguishable frames.
+  // We piggy-back on the seeded body layer so each captured frame ends up
+  // with a body translation delta we can fingerprint after paste.
+  const bodyId = store.getState().project.scene.characters[0].layers[0].id;
+  // Prune to a known starting state by deleting frames until 1 remains.
+  while (store.getState().project.scene.frames.length > 1) {
+    store.getState().deleteFrame();
+  }
+  const stamp = (x) => {
+    store.getState().clearEdits();
+    store.getState().stageEdit(bodyId, { translation: { x, y: 0 } });
+    store.getState().captureFrame("selected");
+  };
+  stamp(100);
+  stamp(200);
+  stamp(300);
+  // Now have 4 frames: [empty, x=100, x=200, x=300].
+  const totalAfterStamp = store.getState().project.scene.frames.length;
+
+  // Range-select frames 1..3 via the store action (mirrors what the
+  // Timeline header click handler does on shift-click).
+  store.getState().setSelectedFrames([1, 2, 3]);
+  const copied = store.getState().copySelectedFrames();
+
+  // Move to frame 0, paste-insert. Should produce frames [empty, 100', 200',
+  // 300', 100, 200, 300] = 7 frames; currentFrameIndex = 3 (last pasted).
+  store.getState().setFrameIndex(0);
+  const pastedInsert = store.getState().pasteFramesInsert();
+  const insertResult = {
+    total: store.getState().project.scene.frames.length,
+    cur: store.getState().currentFrameIndex,
+    selectedCount: store.getState().selectedFrames.length,
+  };
+
+  // Paste-append: should add 3 more, total 10, cur = 9.
+  const pastedAppend = store.getState().pasteFramesAppend();
+  const appendResult = {
+    total: store.getState().project.scene.frames.length,
+    cur: store.getState().currentFrameIndex,
+  };
+
+  // Verify the clone is independent: mutating the original frame's delta
+  // shouldn't affect the pasted copy.
+  const originalRef = store.getState().project.scene.frames[4]; // x=100 original
+  const cloneRef = store.getState().project.scene.frames[1]; // x=100' first paste
+  const sameId = originalRef?.id === cloneRef?.id;
+
+  return {
+    totalAfterStamp,
+    copied,
+    pastedInsert,
+    insertResult,
+    pastedAppend,
+    appendResult,
+    sameId,
+  };
+});
+
+if (clipboard.totalAfterStamp !== 4) {
+  throw new Error(`clipboard setup wrong: expected 4 frames, got ${clipboard.totalAfterStamp}`);
+}
+if (clipboard.copied !== 3) throw new Error(`copy returned ${clipboard.copied}, expected 3`);
+if (clipboard.pastedInsert !== 3) throw new Error(`paste-insert returned ${clipboard.pastedInsert}`);
+if (clipboard.insertResult.total !== 7) {
+  throw new Error(`paste-insert total: expected 7, got ${clipboard.insertResult.total}`);
+}
+if (clipboard.insertResult.cur !== 3) {
+  throw new Error(`paste-insert currentFrame: expected 3, got ${clipboard.insertResult.cur}`);
+}
+if (clipboard.insertResult.selectedCount !== 3) {
+  throw new Error(`paste-insert selectedFrames: expected 3, got ${clipboard.insertResult.selectedCount}`);
+}
+if (clipboard.pastedAppend !== 3) throw new Error(`paste-append returned ${clipboard.pastedAppend}`);
+if (clipboard.appendResult.total !== 10) {
+  throw new Error(`paste-append total: expected 10, got ${clipboard.appendResult.total}`);
+}
+if (clipboard.appendResult.cur !== 9) {
+  throw new Error(`paste-append currentFrame: expected 9, got ${clipboard.appendResult.cur}`);
+}
+if (clipboard.sameId) {
+  throw new Error("paste produced a frame with the same id as the source — should mint a new ULID");
+}
+
 if (errs.length) {
   // Filter out the invariant test's intentional warnings.
   const real = errs.filter((m) => !m.includes("__bogus__"));
@@ -796,6 +884,9 @@ console.log(
   `  View: selection sticks ✓ clampToCanvas flag toggles ✓ camera world-pos=(${view.worldBody.x.toFixed(1)},${view.worldBody.y.toFixed(1)})`,
 );
 console.log(`  Drag-target: pre-selected child got the drag (eye edit staged, body untouched)`);
+console.log(
+  `  Clipboard: copied ${clipboard.copied} frames; paste-insert→${clipboard.insertResult.total} (cur=${clipboard.insertResult.cur}, sel=${clipboard.insertResult.selectedCount}); paste-append→${clipboard.appendResult.total} (cur=${clipboard.appendResult.cur}); fresh ids ✓`,
+);
 
 await browser.close();
 server.close();
