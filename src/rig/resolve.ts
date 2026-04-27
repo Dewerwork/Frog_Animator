@@ -12,6 +12,7 @@ import type {
   Project,
   TargetId,
 } from "@/model/types";
+import { clampPose } from "./dragMath";
 
 export type ResolvedPose = Record<TargetId, Required<FrameLayerState>>;
 
@@ -81,5 +82,57 @@ export function resolvePose(project: Project, frameIndex: number): ResolvedPose 
       pose[t] = applyDelta(prev, delta);
     }
   }
+
+  // Clamp pass: enforce per-layer constraints once at the end. Constraints
+  // live on Layer (not per-frame), so we don't have to clamp per-iteration
+  // — only the final resolved value matters for rendering.
+  for (const c of project.scene.characters) {
+    for (const l of c.layers) {
+      if (!l.constraints) continue;
+      const t = l.id as TargetId;
+      const cur = pose[t];
+      if (!cur) continue;
+      pose[t] = clampPose(cur, l.constraints);
+    }
+  }
+
   return pose;
+}
+
+// ── resolved-pose cache ────────────────────────────────────────────────────
+//
+// resolvePose is O(framesUpTo × targetsPerFrame). Onion skinning (which
+// touches several frames per redraw) and Properties (which touches every
+// keystroke) call into it constantly. We memoize per (dirtyTick, frameIndex):
+// any project mutation bumps dirtyTick, blowing the cache; pure scrubbing /
+// staged-edit interactions keep the cache hot.
+
+interface CacheEntry {
+  dirtyTick: number;
+  poses: Map<number, ResolvedPose>;
+}
+
+let cache: CacheEntry | null = null;
+
+export function resolvePoseCached(
+  project: Project,
+  frameIndex: number,
+  dirtyTick: number,
+): ResolvedPose {
+  if (!cache || cache.dirtyTick !== dirtyTick) {
+    cache = { dirtyTick, poses: new Map() };
+  }
+  const hit = cache.poses.get(frameIndex);
+  if (hit) return hit;
+  const pose = resolvePose(project, frameIndex);
+  cache.poses.set(frameIndex, pose);
+  return pose;
+}
+
+export function resolvedPoseCacheSize(): number {
+  return cache?.poses.size ?? 0;
+}
+
+export function clearResolvedPoseCache(): void {
+  cache = null;
 }
