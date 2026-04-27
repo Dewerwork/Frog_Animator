@@ -4,22 +4,31 @@ import { ulid } from "ulid";
 
 import { convertFileSrc, ipc, inTauri } from "@/ipc/tauri";
 import { setCached } from "@/render/textureCache";
+import { saveProjectAs } from "@/project/save";
 import { useStore } from "@/state/store";
 
 /**
  * Pick a PNG, copy it into <projectRoot>/assets/<id>/<file>, register a new
  * wardrobe variant on the active layer, and warm the texture cache so the
  * stage can render it immediately.
+ *
+ * If the project hasn't been saved yet, prompt Save As first — assets need
+ * a project root to copy into.
  */
 export async function importAssetForActiveLayer(): Promise<void> {
   if (!inTauri()) {
     console.warn("importAsset: not in Tauri");
     return;
   }
-  const s = useStore.getState();
+  let s = useStore.getState();
   if (!s.projectRoot) {
-    console.warn("importAsset: project not saved yet — Save As first");
-    return;
+    const savedTo = await saveProjectAs();
+    if (!savedTo) return; // user cancelled
+    s = useStore.getState();
+    if (!s.projectRoot) {
+      console.warn("importAsset: still no projectRoot after save");
+      return;
+    }
   }
   // Find the active layer: first selected layer-id, or first layer of first char.
   const layerId = pickActiveLayerId(s);

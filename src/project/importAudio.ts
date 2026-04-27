@@ -5,6 +5,7 @@ import { audioRuntime } from "@/audio/runtime";
 import { loadTrackFromAbsPath } from "@/audio/decode";
 import { computePeaks } from "@/audio/waveform";
 import { ipc, inTauri } from "@/ipc/tauri";
+import { saveProjectAs } from "@/project/save";
 import { useStore } from "@/state/store";
 
 const PEAKS_PER_SECOND = 80;
@@ -14,10 +15,12 @@ export async function importAudioTrack(): Promise<void> {
     console.warn("importAudio: not in Tauri");
     return;
   }
-  const s = useStore.getState();
+  let s = useStore.getState();
   if (!s.projectRoot) {
-    console.warn("importAudio: project not saved yet — Save As first");
-    return;
+    const savedTo = await saveProjectAs();
+    if (!savedTo) return;
+    s = useStore.getState();
+    if (!s.projectRoot) return;
   }
   const picked = await openDialog({
     title: "Import audio",

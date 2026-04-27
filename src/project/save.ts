@@ -34,7 +34,10 @@ export async function saveProjectAs(): Promise<string | null> {
   if (!picked) return null;
   const json = serialize(s.project);
   await ipc.projectSave(picked, json);
-  s.setProjectPath(picked);
+  // Strip the last path segment for the root. Handles both \ and / so a
+  // Windows path like C:\foo\bar\project.json yields C:\foo\bar.
+  const root = picked.replace(/[\\/][^\\/]+$/, "");
+  useStore.setState({ projectPath: picked, projectRoot: root });
   s.markSaved();
   return picked;
 }
