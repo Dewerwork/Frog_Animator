@@ -14,7 +14,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 serde = { version = "1", features = ["derive"] }
@@ -24,6 +24,7 @@ anyhow = "1"
 notify = "6"
 notify-debouncer-full = "0.3"
 tokio = { version = "1", features = ["full"] }
+ulid = "1"
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]

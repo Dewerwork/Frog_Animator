@@ -1,8 +1,6 @@
-// Headless smoke test for the M1 capture loop.
+// Headless smoke test for M1 (capture loop) + M2 (project file round-trip).
 // Loads the production build over a tiny static server, drives the UI with
-// Playwright, and asserts: frog renders, drag stages an edit, Space captures,
-// scrub goes back, drag-then-capture-then-back-then-forward shows two distinct
-// translations.
+// Playwright, and asserts UI behavior plus serialize→JSON→deserialize fidelity.
 
 import http from "node:http";
 import fs from "node:fs";
@@ -124,12 +122,64 @@ await page.waitForTimeout(20);
 const at2 = await page.locator("text=/\\d+ \\/ \\d+/").first().textContent();
 if (!/^3 \/ 3$/.test(at2?.trim() ?? "")) throw new Error(`insert blank failed, got "${at2}"`);
 
+// 9) Project file round-trip. Serialize the live project (Zod-validated),
+//    parse it, deserialize it back, serialize the result, and assert the two
+//    serializations are byte-identical. That's the actual stable-storage
+//    property we care about — not key-order on the live Immer-managed object.
+const { json1, json2, framesIn1 } = await page.evaluate(() => {
+  // @ts-ignore
+  const { serialize, deserialize } = window.__frogProject;
+  // @ts-ignore
+  const s = window.__frogStore.getState();
+  const j1 = serialize(s.project);
+  const reconstructed = deserialize(j1);
+  const j2 = serialize(reconstructed);
+  return {
+    json1: j1,
+    json2: j2,
+    framesIn1: JSON.parse(j1).scene.frames.length,
+  };
+});
+
+if (framesIn1 !== 3) throw new Error(`round-trip: expected 3 frames in serialized JSON, got ${framesIn1}`);
+if (json1 !== json2) {
+  // Truncate output for readability when this fails.
+  const trunc = (s) => (s.length > 400 ? `${s.slice(0, 400)}…` : s);
+  throw new Error(
+    `round-trip: serialize(deserialize(serialize(p))) drifted\n--- json1 ---\n${trunc(json1)}\n--- json2 ---\n${trunc(json2)}`,
+  );
+}
+
+// 10) Schema-version migration scaffold: feeding a v0 (or unknown) document
+//     should throw a clear error instead of silently corrupting state.
+const migrationGuards = await page.evaluate(() => {
+  // @ts-ignore
+  const { deserialize } = window.__frogProject;
+  const errs = [];
+  try {
+    deserialize('{"schemaVersion":99}');
+    errs.push("expected unsupported-version to throw");
+  } catch {
+    /* expected */
+  }
+  try {
+    deserialize("not-json");
+    errs.push("expected JSON.parse to throw on garbage");
+  } catch {
+    /* expected */
+  }
+  return errs;
+});
+if (migrationGuards.length) throw new Error(migrationGuards.join("; "));
+
 if (errs.length) {
   throw new Error("page produced errors:\n" + errs.join("\n"));
 }
 
-console.log("M1 smoke test passed. Drag staged:", JSON.stringify(stagedAfterDrag));
-console.log("Captured delta:", JSON.stringify(layerDelta));
+console.log("Smoke test passed.");
+console.log("  Drag staged:", JSON.stringify(stagedAfterDrag));
+console.log("  Captured delta:", JSON.stringify(layerDelta));
+console.log(`  Round-trip: ${json1.length} bytes, stable across re-serialize`);
 
 await browser.close();
 server.close();

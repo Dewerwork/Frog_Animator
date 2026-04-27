@@ -9,9 +9,11 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .invoke_handler(tauri::generate_handler![
             commands::project_open,
+            commands::project_create,
             commands::project_save,
             commands::asset_import,
             commands::asset_read,
+            commands::asset_path,
             commands::audio_read,
             commands::watch_assets,
             commands::export_start,

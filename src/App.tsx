@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { tinykeys } from "tinykeys";
 
+import { FileMenu } from "@/panels/FileMenu";
 import { LayerTree } from "@/panels/LayerTree";
 import { ProjectSettings } from "@/panels/ProjectSettings";
 import { Properties } from "@/panels/Properties";
@@ -12,9 +13,13 @@ import { Wardrobe } from "@/panels/Wardrobe";
 import { useStore } from "@/state/store";
 import { frameCount } from "@/state/selectors";
 import { usePlaybackLoop } from "@/state/playback";
+import { useAutosave } from "@/project/autosave";
+import { newProject, openProject } from "@/project/open";
+import { saveProject, saveProjectAs } from "@/project/save";
 
 export function App() {
   usePlaybackLoop();
+  useAutosave();
 
   useEffect(() => {
     const unbind = tinykeys(window, {
@@ -50,15 +55,32 @@ export function App() {
         e.preventDefault();
         useStore.getState().insertBlank();
       },
+      "$mod+KeyN": (e) => {
+        e.preventDefault();
+        void newProject();
+      },
+      "$mod+KeyO": (e) => {
+        e.preventDefault();
+        void openProject();
+      },
+      "$mod+KeyS": (e) => {
+        e.preventDefault();
+        void saveProject();
+      },
+      "$mod+Shift+KeyS": (e) => {
+        e.preventDefault();
+        void saveProjectAs();
+      },
     });
     return () => unbind();
   }, []);
 
   return (
     <div className="grid h-screen w-screen grid-rows-[auto_1fr_220px] bg-panel text-ink">
-      <header className="flex items-center justify-between border-b border-edge bg-panel2 px-3 py-2">
-        <div className="flex items-center gap-3">
+      <header className="flex flex-wrap items-center justify-between gap-2 border-b border-edge bg-panel2 px-3 py-2">
+        <div className="flex flex-wrap items-center gap-3">
           <span className="font-semibold">Frog Animator</span>
+          <FileMenu />
           <RigMode />
           <Transport />
         </div>

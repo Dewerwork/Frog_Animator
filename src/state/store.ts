@@ -20,6 +20,11 @@ export type EditorMode = "animate" | "rig";
 export interface AppState {
   project: Project | null;
   projectPath: string | null;
+  /** Absolute path to <projectRoot>/ — parent of project.json. */
+  projectRoot: string | null;
+  /** Bumped on any project mutation; reset by markSaved(). Drives autosave. */
+  dirtyTick: number;
+  lastSavedTick: number;
 
   currentFrameIndex: number;
   selection: TargetId[];
@@ -28,11 +33,20 @@ export interface AppState {
 
   editing: EditingBuffer;
 
-  setProject: (project: Project, path: string | null) => void;
+  setProject: (project: Project, path: string | null, root?: string | null) => void;
+  setProjectPath: (path: string | null) => void;
+  markSaved: () => void;
   setMode: (mode: EditorMode) => void;
   setSelection: (sel: TargetId[]) => void;
   setFrameIndex: (i: number) => void;
   togglePlay: () => void;
+
+  /** Add a wardrobe variant to a layer, optionally selecting it. */
+  addWardrobeVariant: (
+    layerId: string,
+    variant: { id: string; name: string; assetId: string; file: string },
+    select?: boolean,
+  ) => void;
 
   /** Stage a sparse delta into the editing buffer. */
   stageEdit: (target: TargetId, patch: FrameLayerState) => void;
@@ -131,7 +145,7 @@ function defaultFrog(): Character {
   };
 }
 
-const initialProject = (): Project => ({
+export const initialProject = (): Project => ({
   schemaVersion: 1,
   settings: {
     fps: 12,
@@ -152,22 +166,67 @@ const initialProject = (): Project => ({
   },
 });
 
+/** Wraps an Immer recipe so it bumps dirtyTick on any structural mutation. */
+function dirty(
+  recipe: (s: AppState) => void,
+): (s: AppState) => void {
+  return (s) => {
+    recipe(s);
+    s.dirtyTick += 1;
+  };
+}
+
 export const useStore = create<AppState>((set) => ({
   project: initialProject(),
   projectPath: null,
+  projectRoot: null,
+  dirtyTick: 0,
+  lastSavedTick: 0,
   currentFrameIndex: 0,
   selection: [],
   mode: "animate",
   playing: false,
   editing: { edits: {} },
 
-  setProject: (project, path) =>
-    set({ project, projectPath: path, currentFrameIndex: 0, selection: [], editing: { edits: {} } }),
+  setProject: (project, path, root = null) =>
+    set({
+      project,
+      projectPath: path,
+      projectRoot: root,
+      currentFrameIndex: 0,
+      selection: [],
+      editing: { edits: {} },
+      dirtyTick: 0,
+      lastSavedTick: 0,
+    }),
+
+  setProjectPath: (path) => set({ projectPath: path }),
+  markSaved: () => set((s) => ({ lastSavedTick: s.dirtyTick })),
 
   setMode: (mode) => set({ mode }),
   setSelection: (selection) => set({ selection }),
   setFrameIndex: (currentFrameIndex) => set({ currentFrameIndex }),
   togglePlay: () => set((s) => ({ playing: !s.playing })),
+
+  addWardrobeVariant: (layerId, variant, select = true) =>
+    set(
+      produce(
+        dirty((s: AppState) => {
+          if (!s.project) return;
+          for (const c of s.project.scene.characters) {
+            const layer = c.layers.find((l) => l.id === layerId);
+            if (!layer) continue;
+            layer.wardrobe.push({
+              id: variant.id,
+              name: variant.name,
+              asset: { assetId: variant.assetId, file: variant.file },
+            });
+            if (select) layer.rest.defaultVariantId = variant.id;
+            return;
+          }
+        }),
+      ),
+    ),
 
   stageEdit: (target, patch) =>
     set(
@@ -180,32 +239,36 @@ export const useStore = create<AppState>((set) => ({
 
   captureFrame: (mode) =>
     set(
-      produce((s: AppState) => {
-        if (!s.project) return;
-        const inherited = resolvePose(s.project, s.currentFrameIndex);
-        const frame: Frame = { id: ulid(), layers: {} };
-        const targets: TargetId[] =
-          mode === "all" ? allTargetIds(s.project) : s.selection;
-        for (const t of targets) {
-          const base = inherited[t];
-          if (!base) continue;
-          const intended = applyEdit(base, s.editing.edits[t]);
-          const delta = diffFields(base, intended);
-          if (Object.keys(delta).length > 0) frame.layers[t] = delta;
-        }
-        s.project.scene.frames.splice(s.currentFrameIndex + 1, 0, frame);
-        s.currentFrameIndex += 1;
-        s.editing.edits = {};
-      }),
+      produce(
+        dirty((s: AppState) => {
+          if (!s.project) return;
+          const inherited = resolvePose(s.project, s.currentFrameIndex);
+          const frame: Frame = { id: ulid(), layers: {} };
+          const targets: TargetId[] =
+            mode === "all" ? allTargetIds(s.project) : s.selection;
+          for (const t of targets) {
+            const base = inherited[t];
+            if (!base) continue;
+            const intended = applyEdit(base, s.editing.edits[t]);
+            const delta = diffFields(base, intended);
+            if (Object.keys(delta).length > 0) frame.layers[t] = delta;
+          }
+          s.project.scene.frames.splice(s.currentFrameIndex + 1, 0, frame);
+          s.currentFrameIndex += 1;
+          s.editing.edits = {};
+        }),
+      ),
     ),
 
   insertBlank: () =>
     set(
-      produce((s: AppState) => {
-        if (!s.project) return;
-        s.project.scene.frames.splice(s.currentFrameIndex + 1, 0, { id: ulid(), layers: {} });
-        s.currentFrameIndex += 1;
-        s.editing.edits = {};
-      }),
+      produce(
+        dirty((s: AppState) => {
+          if (!s.project) return;
+          s.project.scene.frames.splice(s.currentFrameIndex + 1, 0, { id: ulid(), layers: {} });
+          s.currentFrameIndex += 1;
+          s.editing.edits = {};
+        }),
+      ),
     ),
 }));
