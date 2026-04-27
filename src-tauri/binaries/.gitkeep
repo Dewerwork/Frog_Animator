@@ -1,0 +1,2 @@
+# Placeholder for bundled ffmpeg sidecars (M7).
+# Names follow Tauri's per-target convention: ffmpeg-<target-triple>[.exe]
