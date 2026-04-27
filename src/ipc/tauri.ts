@@ -26,8 +26,15 @@ export const ipc = {
     invoke<number[]>("asset_read", { projectRoot, assetId, file }),
   assetPath: (projectRoot: string, assetId: string, file: string) =>
     invoke<string>("asset_path", { projectRoot, assetId, file }),
-  audioRead: (projectRoot: string, trackId: string) =>
-    invoke<number[]>("audio_read", { projectRoot, trackId }),
+  audioRead: (projectRoot: string, trackId: string, file: string) =>
+    invoke<number[]>("audio_read", { projectRoot, trackId, file }),
+  audioImport: (projectRoot: string, src: string) =>
+    invoke<{ trackId: string; file: string; absPath: string }>("audio_import", {
+      projectRoot,
+      src,
+    }),
+  audioPath: (projectRoot: string, trackId: string, file: string) =>
+    invoke<string>("audio_path", { projectRoot, trackId, file }),
   watchAssets: (projectRoot: string) => invoke<void>("watch_assets", { projectRoot }),
   exportStart: (req: {
     projectRoot: string;

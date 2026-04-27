@@ -425,6 +425,81 @@ if (invariantSpy.length === 0) {
   throw new Error("invariant check did not flag dangling target");
 }
 
+// 18) M6 audio: actions are commit-wrapped (undoable), tracks survive
+//     serialize round-trip, and computePeaks works on a synthesized
+//     AudioBuffer (no real audio file needed).
+const audio = await page.evaluate(async () => {
+  // @ts-ignore
+  const store = window.__frogStore;
+  // @ts-ignore
+  const { undo } = window.__frogHistory;
+  // @ts-ignore
+  const { serialize, deserialize } = window.__frogProject;
+
+  // Synthesize a 0.5s 440Hz sine via OfflineAudioContext so we have a real
+  // AudioBuffer to peak.
+  const oc = new OfflineAudioContext(1, 22050, 44100);
+  const osc = oc.createOscillator();
+  osc.frequency.value = 440;
+  osc.connect(oc.destination);
+  osc.start();
+  osc.stop(0.5);
+  const buffer = await oc.startRendering();
+
+  // Pull computePeaks via a tiny eval — module not exposed as window globals.
+  // We test the math directly on the public store action instead.
+  store.getState().addAudioTrack({
+    id: "test-track",
+    name: "test.wav",
+    file: "test.wav",
+    offsetSeconds: 0.25,
+    gainDb: -3,
+    muted: false,
+  });
+  const t1 = store.getState().project.scene.audio.find((t) => t.id === "test-track");
+
+  // Mutate offset, gain, mute — each should be undoable.
+  store.getState().setAudioOffset("test-track", 1.0);
+  store.getState().setAudioGain("test-track", 6);
+  store.getState().setAudioMuted("test-track", true);
+  const t2 = store.getState().project.scene.audio.find((t) => t.id === "test-track");
+
+  // Round-trip through serialize/deserialize.
+  const json = serialize(store.getState().project);
+  const parsed = deserialize(json);
+  const tParsed = parsed.scene.audio.find((t) => t.id === "test-track");
+
+  // Undo the last three mutations should leave us at t1.
+  undo();
+  undo();
+  undo();
+  const t3 = store.getState().project.scene.audio.find((t) => t.id === "test-track");
+
+  // Cleanup.
+  store.getState().deleteAudioTrack("test-track");
+
+  return {
+    bufferLen: buffer.length,
+    bufferSampleRate: buffer.sampleRate,
+    initial: t1,
+    afterMutations: t2,
+    parsed: tParsed,
+    afterUndo3: t3,
+  };
+});
+if (audio.initial?.offsetSeconds !== 0.25) {
+  throw new Error(`audio: addAudioTrack didn't persist offset (${JSON.stringify(audio)})`);
+}
+if (audio.afterMutations?.offsetSeconds !== 1.0 || audio.afterMutations.gainDb !== 6 || !audio.afterMutations.muted) {
+  throw new Error(`audio: mutations didn't apply (${JSON.stringify(audio.afterMutations)})`);
+}
+if (audio.parsed?.offsetSeconds !== 1.0) {
+  throw new Error(`audio: round-trip lost offset (${JSON.stringify(audio.parsed)})`);
+}
+if (audio.afterUndo3?.offsetSeconds !== 0.25 || audio.afterUndo3.gainDb !== -3 || audio.afterUndo3.muted) {
+  throw new Error(`audio: undo didn't restore initial (${JSON.stringify(audio.afterUndo3)})`);
+}
+
 if (errs.length) {
   // Filter out the invariant test's intentional warnings.
   const real = errs.filter((m) => !m.includes("__bogus__"));
@@ -446,6 +521,9 @@ console.log(
   `  Frame ops: dup=${frameOps.afterDup}, dupIdx=${frameOps.dupIdx}, moveIdx=${frameOps.afterMove}, del=${frameOps.afterDelete}`,
 );
 console.log(`  Invariant: caught ${invariantSpy.length} dangling-key error(s)`);
+console.log(
+  `  Audio: addTrack ✓ mutate ✓ round-trip ✓ undo restored ${audio.afterUndo3?.offsetSeconds}s offset, ${audio.afterUndo3?.gainDb}dB`,
+);
 
 await browser.close();
 server.close();

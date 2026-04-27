@@ -15,6 +15,8 @@ pub fn run() {
             commands::asset_read,
             commands::asset_path,
             commands::audio_read,
+            commands::audio_import,
+            commands::audio_path,
             commands::watch_assets,
             commands::export_start,
             commands::export_cancel,

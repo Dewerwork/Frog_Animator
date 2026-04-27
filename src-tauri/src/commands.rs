@@ -124,8 +124,41 @@ pub async fn asset_path(project_root: PathBuf, asset_id: String, file: String) -
 }
 
 #[tauri::command]
-pub async fn audio_read(_project_root: PathBuf, _track_id: String) -> CmdResult<Vec<u8>> {
-    Err(CmdError::NotImplemented("audio_read"))
+pub async fn audio_read(project_root: PathBuf, track_id: String, file: String) -> CmdResult<Vec<u8>> {
+    let p = project_root.join("audio").join(&track_id).join(&file);
+    Ok(fs::read(p)?)
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportedAudio {
+    pub track_id: String,
+    pub file: String,
+    pub abs_path: PathBuf,
+}
+
+#[tauri::command]
+pub async fn audio_import(project_root: PathBuf, src: PathBuf) -> CmdResult<ImportedAudio> {
+    let file = src
+        .file_name()
+        .ok_or_else(|| CmdError::InvalidPath(format!("{} has no file name", src.display())))?
+        .to_string_lossy()
+        .to_string();
+    let track_id = ulid::Ulid::new().to_string();
+    let dst_dir = project_root.join("audio").join(&track_id);
+    fs::create_dir_all(&dst_dir)?;
+    let dst = dst_dir.join(&file);
+    fs::copy(&src, &dst)?;
+    Ok(ImportedAudio {
+        track_id,
+        file,
+        abs_path: dst,
+    })
+}
+
+#[tauri::command]
+pub async fn audio_path(project_root: PathBuf, track_id: String, file: String) -> CmdResult<PathBuf> {
+    Ok(project_root.join("audio").join(&track_id).join(&file))
 }
 
 #[tauri::command]

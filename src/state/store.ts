@@ -88,6 +88,20 @@ export interface AppState {
     tintBefore: number;
     tintAfter: number;
   }>) => void;
+
+  addAudioTrack: (track: {
+    id: string;
+    name: string;
+    file: string;
+    offsetSeconds?: number;
+    gainDb?: number;
+    muted?: boolean;
+  }) => void;
+  setAudioOffset: (trackId: string, offsetSeconds: number) => void;
+  setAudioGain: (trackId: string, gainDb: number) => void;
+  setAudioMuted: (trackId: string, muted: boolean) => void;
+  renameAudioTrack: (trackId: string, name: string) => void;
+  deleteAudioTrack: (trackId: string) => void;
 }
 
 // ── helpers ────────────────────────────────────────────────────────────────
@@ -661,6 +675,65 @@ export const useStore = create<AppState>((set) => ({
       commit("setOnionSkin", (s) => {
         if (!s.project) return;
         Object.assign(s.project.settings.onionSkin, patch);
+      }),
+    ),
+
+  addAudioTrack: (track) =>
+    set(
+      commit("addAudioTrack", (s) => {
+        if (!s.project) return;
+        s.project.scene.audio.push({
+          id: track.id,
+          name: track.name,
+          file: track.file,
+          offsetSeconds: track.offsetSeconds ?? 0,
+          gainDb: track.gainDb ?? 0,
+          muted: track.muted ?? false,
+        });
+      }),
+    ),
+
+  setAudioOffset: (trackId, offsetSeconds) =>
+    set(
+      commit("setAudioOffset", (s) => {
+        if (!s.project) return;
+        const t = s.project.scene.audio.find((x) => x.id === trackId);
+        if (t) t.offsetSeconds = offsetSeconds;
+      }),
+    ),
+
+  setAudioGain: (trackId, gainDb) =>
+    set(
+      commit("setAudioGain", (s) => {
+        if (!s.project) return;
+        const t = s.project.scene.audio.find((x) => x.id === trackId);
+        if (t) t.gainDb = gainDb;
+      }),
+    ),
+
+  setAudioMuted: (trackId, muted) =>
+    set(
+      commit("setAudioMuted", (s) => {
+        if (!s.project) return;
+        const t = s.project.scene.audio.find((x) => x.id === trackId);
+        if (t) t.muted = muted;
+      }),
+    ),
+
+  renameAudioTrack: (trackId, name) =>
+    set(
+      commit("renameAudioTrack", (s) => {
+        if (!s.project) return;
+        const t = s.project.scene.audio.find((x) => x.id === trackId);
+        if (t) t.name = name;
+      }),
+    ),
+
+  deleteAudioTrack: (trackId) =>
+    set(
+      commit("deleteAudioTrack", (s) => {
+        if (!s.project) return;
+        s.project.scene.audio = s.project.scene.audio.filter((x) => x.id !== trackId);
       }),
     ),
 }));

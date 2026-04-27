@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { tinykeys } from "tinykeys";
 
+import { AudioPanel } from "@/panels/AudioPanel";
 import { FileMenu } from "@/panels/FileMenu";
 import { LayerTree } from "@/panels/LayerTree";
 import { ProjectSettings } from "@/panels/ProjectSettings";
@@ -116,9 +117,16 @@ export function App() {
         <section className="overflow-hidden">
           <Stage />
         </section>
-        <aside className="grid grid-rows-2 border-l border-edge">
-          <Properties />
-          <Wardrobe />
+        <aside className="grid grid-rows-[1fr_1fr_1fr] overflow-hidden border-l border-edge">
+          <div className="overflow-auto">
+            <Properties />
+          </div>
+          <div className="overflow-auto border-t border-edge">
+            <Wardrobe />
+          </div>
+          <div className="overflow-auto border-t border-edge">
+            <AudioPanel />
+          </div>
         </aside>
       </main>
 
