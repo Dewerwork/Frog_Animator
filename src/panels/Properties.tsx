@@ -1,4 +1,6 @@
-import type { Layer, TargetId } from "@/model/types";
+import { useState } from "react";
+
+import type { Layer, LayerConstraints, TargetId, Vec2 } from "@/model/types";
 import { useStore } from "@/state/store";
 import { resolvePoseCached } from "@/rig/resolve";
 
@@ -130,10 +132,162 @@ export function Properties() {
         </button>
       </div>
 
+      {mode === "rig" ? <ConstraintsSection layer={layer} /> : null}
+
       <div className="mt-2 truncate text-[10px] text-ink/40">
         layer: <span className="font-mono">{layer.id}</span>
       </div>
     </div>
+  );
+}
+
+function ConstraintsSection({ layer }: { layer: Layer }) {
+  const setLayerConstraints = useStore((s) => s.setLayerConstraints);
+  const [expanded, setExpanded] = useState(false);
+  const c = layer.constraints;
+
+  const update = (patch: Partial<LayerConstraints>) => {
+    const next: LayerConstraints = { ...c, ...patch };
+    // If every axis is empty, drop the whole field.
+    if (!next.rotation && !next.translation && !next.scale) {
+      setLayerConstraints(layer.id, undefined);
+    } else {
+      setLayerConstraints(layer.id, next);
+    }
+  };
+
+  return (
+    <div className="mt-2 rounded border border-edge">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="flex w-full items-center justify-between px-2 py-1 text-ink/80"
+      >
+        <span>Constraints {c ? "•" : ""}</span>
+        <span className="text-ink/40">{expanded ? "▾" : "▸"}</span>
+      </button>
+      {expanded ? (
+        <div className="space-y-2 p-2">
+          <RotationConstraint
+            value={c?.rotation}
+            onChange={(rotation) => update({ rotation })}
+          />
+          <BoxConstraint
+            label="translation"
+            value={c?.translation}
+            step={1}
+            onChange={(translation) => update({ translation })}
+          />
+          <BoxConstraint
+            label="scale"
+            value={c?.scale}
+            step={0.1}
+            defaultMin={{ x: 0, y: 0 }}
+            defaultMax={{ x: 4, y: 4 }}
+            onChange={(scale) => update({ scale })}
+          />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function RotationConstraint(props: {
+  value: { min: number; max: number } | undefined;
+  onChange: (v: { min: number; max: number } | undefined) => void;
+}) {
+  const enabled = !!props.value;
+  const min = props.value?.min ?? -Math.PI / 4;
+  const max = props.value?.max ?? Math.PI / 4;
+  return (
+    <div>
+      <label className="flex items-center gap-1 text-ink/70">
+        <input
+          type="checkbox"
+          checked={enabled}
+          onChange={(e) =>
+            props.onChange(e.currentTarget.checked ? { min, max } : undefined)
+          }
+        />
+        rotation°
+      </label>
+      {enabled ? (
+        <div className="ml-5 grid grid-cols-2 gap-1">
+          <Num
+            label="min"
+            value={(min * 180) / Math.PI}
+            step={1}
+            onChange={(deg) =>
+              props.onChange({ min: (deg * Math.PI) / 180, max })
+            }
+          />
+          <Num
+            label="max"
+            value={(max * 180) / Math.PI}
+            step={1}
+            onChange={(deg) =>
+              props.onChange({ min, max: (deg * Math.PI) / 180 })
+            }
+          />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function BoxConstraint(props: {
+  label: string;
+  value: { min: Vec2; max: Vec2 } | undefined;
+  step: number;
+  defaultMin?: Vec2;
+  defaultMax?: Vec2;
+  onChange: (v: { min: Vec2; max: Vec2 } | undefined) => void;
+}) {
+  const enabled = !!props.value;
+  const min = props.value?.min ?? props.defaultMin ?? { x: -1000, y: -1000 };
+  const max = props.value?.max ?? props.defaultMax ?? { x: 1000, y: 1000 };
+  return (
+    <div>
+      <label className="flex items-center gap-1 text-ink/70">
+        <input
+          type="checkbox"
+          checked={enabled}
+          onChange={(e) =>
+            props.onChange(e.currentTarget.checked ? { min, max } : undefined)
+          }
+        />
+        {props.label}
+      </label>
+      {enabled ? (
+        <div className="ml-5 grid grid-cols-4 gap-1">
+          <Num label="x≥" value={min.x} step={props.step}
+            onChange={(x) => props.onChange({ min: { x, y: min.y }, max })} />
+          <Num label="x≤" value={max.x} step={props.step}
+            onChange={(x) => props.onChange({ min, max: { x, y: max.y } })} />
+          <Num label="y≥" value={min.y} step={props.step}
+            onChange={(y) => props.onChange({ min: { x: min.x, y }, max })} />
+          <Num label="y≤" value={max.y} step={props.step}
+            onChange={(y) => props.onChange({ min, max: { x: max.x, y } })} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function Num(props: { label: string; value: number; step: number; onChange: (n: number) => void }) {
+  return (
+    <label className="flex items-center gap-1">
+      <span className="text-[10px] text-ink/50">{props.label}</span>
+      <input
+        type="number"
+        step={props.step}
+        value={Number.isFinite(props.value) ? Number(props.value.toFixed(3)) : 0}
+        onChange={(e) => {
+          const n = parseFloat(e.currentTarget.value);
+          if (Number.isFinite(n)) props.onChange(n);
+        }}
+        className="w-full rounded border border-edge bg-panel px-1 py-0.5 font-mono"
+      />
+    </label>
   );
 }
 

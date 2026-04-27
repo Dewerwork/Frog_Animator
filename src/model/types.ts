@@ -32,6 +32,15 @@ export interface LayerRest {
   defaultZ: number;
 }
 
+/** Optional joint constraints — clamped both during drag and inside the
+ *  resolver after each frame's deltas are applied. All bounds are in
+ *  parent-local space (rotation in radians). Any axis can be omitted. */
+export interface LayerConstraints {
+  rotation?: { min: number; max: number };
+  translation?: { min: Vec2; max: Vec2 };
+  scale?: { min: Vec2; max: Vec2 };
+}
+
 export interface Layer {
   id: Id;
   name: string;
@@ -40,6 +49,7 @@ export interface Layer {
   pivot: Vec2;
   rest: LayerRest;
   wardrobe: WardrobeVariant[];
+  constraints?: LayerConstraints;
 }
 
 export interface Character {

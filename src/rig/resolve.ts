@@ -12,6 +12,7 @@ import type {
   Project,
   TargetId,
 } from "@/model/types";
+import { clampPose } from "./dragMath";
 
 export type ResolvedPose = Record<TargetId, Required<FrameLayerState>>;
 
@@ -81,6 +82,20 @@ export function resolvePose(project: Project, frameIndex: number): ResolvedPose 
       pose[t] = applyDelta(prev, delta);
     }
   }
+
+  // Clamp pass: enforce per-layer constraints once at the end. Constraints
+  // live on Layer (not per-frame), so we don't have to clamp per-iteration
+  // — only the final resolved value matters for rendering.
+  for (const c of project.scene.characters) {
+    for (const l of c.layers) {
+      if (!l.constraints) continue;
+      const t = l.id as TargetId;
+      const cur = pose[t];
+      if (!cur) continue;
+      pose[t] = clampPose(cur, l.constraints);
+    }
+  }
+
   return pose;
 }
 

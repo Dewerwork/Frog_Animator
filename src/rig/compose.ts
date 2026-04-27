@@ -32,11 +32,23 @@ export function createComposeState(): ComposeState {
   return { sprites: new Map(), charRoots: new Map(), bgSprite: null, bgId: null };
 }
 
+function activeVariant(layer: Layer, variantId: string) {
+  return layer.wardrobe.find((v) => v.id === variantId) ?? layer.wardrobe[0];
+}
+
 function resolveTexture(layer: Layer, variantId: string): Texture {
-  const variant = layer.wardrobe.find((v) => v.id === variantId) ?? layer.wardrobe[0];
+  const variant = activeVariant(layer, variantId);
   if (!variant) return Texture.EMPTY;
   if (isBuiltin(variant.asset.assetId)) return getBuiltinTexture(variant.asset.assetId);
   return getCached(variant.asset) ?? Texture.EMPTY;
+}
+
+/** Resolve the effective pivot for a layer at a given variant. The variant
+ *  can override the layer-level pivot (lets e.g. "open mouth" sit at a
+ *  different anchor than "closed mouth" without forking the layer). */
+function effectivePivot(layer: Layer, variantId: string): { x: number; y: number } {
+  const variant = activeVariant(layer, variantId);
+  return variant?.pivotOverride ?? layer.pivot;
 }
 
 /**
@@ -139,10 +151,12 @@ export function composeInto(
         if (sprite.texture !== tex) sprite.texture = tex;
       }
 
-      // Anchor from image-local pivot. Texture is guaranteed valid here.
+      // Anchor from image-local pivot. The variant may override pivot for
+      // shape-changing wardrobe swaps (e.g. open vs. closed mouth).
       const tw = sprite.texture.width || 1;
       const th = sprite.texture.height || 1;
-      sprite.anchor.set(layer.pivot.x / tw, layer.pivot.y / th);
+      const piv = effectivePivot(layer, lp.variantId);
+      sprite.anchor.set(piv.x / tw, piv.y / th);
 
       sprite.position.set(lp.translation.x, lp.translation.y);
       sprite.rotation = lp.rotation;

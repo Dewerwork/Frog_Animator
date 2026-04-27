@@ -23,6 +23,14 @@ const LayerRest = z.object({
   defaultZ: z.number(),
 });
 
+const LayerConstraints = z
+  .object({
+    rotation: z.object({ min: z.number(), max: z.number() }).optional(),
+    translation: z.object({ min: Vec2, max: Vec2 }).optional(),
+    scale: z.object({ min: Vec2, max: Vec2 }).optional(),
+  })
+  .optional();
+
 const Layer = z.object({
   id: z.string(),
   name: z.string(),
@@ -30,6 +38,7 @@ const Layer = z.object({
   pivot: Vec2,
   rest: LayerRest,
   wardrobe: z.array(WardrobeVariant),
+  constraints: LayerConstraints,
 });
 
 const Character = z.object({

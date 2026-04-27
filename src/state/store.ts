@@ -16,6 +16,7 @@ import type {
   Character,
   Frame,
   Layer,
+  LayerConstraints,
   Project,
   TargetId,
   FrameLayerState,
@@ -68,7 +69,9 @@ export interface AppState {
   reparentLayer: (layerId: string, newParent: string | null) => boolean;
   setLayerRestTranslation: (layerId: string, translation: Vec2) => void;
   setLayerRestRotation: (layerId: string, rotation: number) => void;
+  setLayerRestScale: (layerId: string, scale: Vec2) => void;
   setLayerPivot: (layerId: string, pivot: Vec2, translationCompensation?: Vec2) => void;
+  setLayerConstraints: (layerId: string, constraints: LayerConstraints | undefined) => void;
   renameLayer: (layerId: string, name: string) => void;
 
   stageEdit: (target: TargetId, patch: FrameLayerState) => void;
@@ -544,6 +547,15 @@ export const useStore = create<AppState>((set) => ({
       }),
     ),
 
+  setLayerRestScale: (layerId, scale) =>
+    set(
+      commit("setLayerRestScale", (s) => {
+        forEachLayer(s, layerId, (l) => {
+          l.rest.scale = { ...scale };
+        });
+      }),
+    ),
+
   setLayerPivot: (layerId, pivot, translationCompensation) =>
     set(
       commit("setLayerPivot", (s) => {
@@ -554,6 +566,20 @@ export const useStore = create<AppState>((set) => ({
               x: l.rest.translation.x + translationCompensation.x,
               y: l.rest.translation.y + translationCompensation.y,
             };
+          }
+        });
+      }),
+    ),
+
+  setLayerConstraints: (layerId, constraints) =>
+    set(
+      commit("setLayerConstraints", (s) => {
+        forEachLayer(s, layerId, (l) => {
+          if (constraints === undefined) {
+            delete l.constraints;
+          } else {
+            // Deep-clone so the caller can keep using its reference safely.
+            l.constraints = JSON.parse(JSON.stringify(constraints));
           }
         });
       }),
