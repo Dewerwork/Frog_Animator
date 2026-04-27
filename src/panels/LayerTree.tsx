@@ -38,6 +38,7 @@ export function LayerTree() {
   const addLayer = useStore((s) => s.addLayer);
   const deleteLayer = useStore((s) => s.deleteLayer);
   const renameLayer = useStore((s) => s.renameLayer);
+  const setCharacterClampToCanvas = useStore((s) => s.setCharacterClampToCanvas);
 
   const [dragId, setDragId] = useState<string | null>(null);
   const [hoverId, setHoverId] = useState<string | null | undefined>(undefined);
@@ -55,13 +56,26 @@ export function LayerTree() {
           <div key={c.id} className="border-b border-edge">
             <div className="flex items-center justify-between px-2 py-1">
               <span className="font-medium">{c.name}</span>
-              <button
-                onClick={() => addLayer(c.id, null, "Layer")}
-                className="rounded border border-edge px-1.5 text-ink/70 hover:text-ink"
-                title="Add top-level layer"
-              >
-                +
-              </button>
+              <div className="flex items-center gap-2">
+                <label
+                  className="flex items-center gap-1 text-[10px] text-ink/60"
+                  title="When checked, layers can't be dragged outside the canvas"
+                >
+                  <input
+                    type="checkbox"
+                    checked={!!c.clampToCanvas}
+                    onChange={(e) => setCharacterClampToCanvas(c.id, e.currentTarget.checked)}
+                  />
+                  in canvas
+                </label>
+                <button
+                  onClick={() => addLayer(c.id, null, "Layer")}
+                  className="rounded border border-edge px-1.5 text-ink/70 hover:text-ink"
+                  title="Add top-level layer"
+                >
+                  +
+                </button>
+              </div>
             </div>
 
             {/* Drop zone for top-level (parent === null). */}

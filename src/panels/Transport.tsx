@@ -1,6 +1,7 @@
 import { useStore } from "@/state/store";
 import { frameCount } from "@/state/selectors";
 import { redo, undo } from "@/state/history";
+import { centerCamera, zoomCamera } from "@/render/cameraControls";
 
 export function Transport() {
   const playing = useStore((s) => s.playing);
@@ -105,6 +106,28 @@ export function Transport() {
         title="Redo (Ctrl/Cmd+Shift+Z)"
       >
         ↷
+      </button>
+      <span className="mx-2 h-5 border-l border-edge" />
+      <button
+        onClick={() => zoomCamera(1 / 1.25)}
+        className="rounded border border-edge px-2 py-1"
+        title="Zoom out"
+      >
+        −
+      </button>
+      <button
+        onClick={() => centerCamera()}
+        className="rounded border border-edge px-2 py-1"
+        title="Center / fit canvas to viewport"
+      >
+        ⊙
+      </button>
+      <button
+        onClick={() => zoomCamera(1.25)}
+        className="rounded border border-edge px-2 py-1"
+        title="Zoom in"
+      >
+        +
       </button>
     </div>
   );

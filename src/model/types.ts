@@ -61,6 +61,9 @@ export interface Character {
     rotation: number;
     scale: Vec2;
   };
+  /** When true, layer drags are clamped so the layer's anchored point stays
+   *  within the canvas rect. Default false (layers are free to leave). */
+  clampToCanvas?: boolean;
 }
 
 /** Sparse delta: absent fields fall back to the prior resolved value. */

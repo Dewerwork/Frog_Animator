@@ -50,6 +50,7 @@ const Character = z.object({
     rotation: z.number(),
     scale: Vec2,
   }),
+  clampToCanvas: z.boolean().optional(),
 });
 
 const FrameLayerState = z

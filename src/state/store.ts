@@ -64,6 +64,8 @@ export interface AppState {
   deleteWardrobeVariant: (layerId: string, variantId: string) => boolean;
   setLayerDefaultVariant: (layerId: string, variantId: string) => void;
 
+  setCharacterClampToCanvas: (characterId: string, clamp: boolean) => void;
+
   addLayer: (characterId: string, parent: string | null, name?: string) => string | null;
   deleteLayer: (layerId: string) => void;
   reparentLayer: (layerId: string, newParent: string | null) => boolean;
@@ -427,6 +429,17 @@ export const useStore = create<AppState>((set) => ({
             l.rest.defaultVariantId = variantId;
           }
         });
+      }),
+    ),
+
+  setCharacterClampToCanvas: (characterId, clamp) =>
+    set(
+      commit("setCharacterClampToCanvas", (s) => {
+        if (!s.project) return;
+        const c = s.project.scene.characters.find((x) => x.id === characterId);
+        if (!c) return;
+        if (clamp) c.clampToCanvas = true;
+        else delete c.clampToCanvas;
       }),
     ),
 

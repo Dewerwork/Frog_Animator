@@ -12,6 +12,7 @@ import {
   clampTranslation,
   shortestArc,
 } from "@/rig/dragMath";
+import { registerCameraControls } from "@/render/cameraControls";
 import type { Layer, LayerConstraints, TargetId, Vec2 } from "@/model/types";
 
 type DragKind = "translate" | "pivot" | "rotate" | "scale";
@@ -40,6 +41,10 @@ const ROTATION_GRIP_RADIUS = 60;
 
 /** Half-extent of a scale corner from its bbox corner (visual size). */
 const SCALE_GRIP_HALF = 5;
+
+const ZOOM_MIN = 0.1;
+const ZOOM_MAX = 8;
+const ZOOM_STEP = 1.15;
 
 export function Stage() {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -70,6 +75,56 @@ export function Stage() {
       }
       handlesRef.current = h;
       drawNow();
+      // Initial fit: scale the camera so the canvas fills the viewport.
+      fitCameraToHost();
+    });
+
+    // Camera input on the host element: wheel = zoom around cursor; middle
+    // mouse drag = pan. Pointer events for layer drags stay on the Pixi
+    // canvas so they keep going through Pixi's federated event system.
+    const onWheel = (e: WheelEvent) => {
+      const handles = handlesRef.current;
+      if (!handles) return;
+      e.preventDefault();
+      const factor = e.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP;
+      const rect = canvas.getBoundingClientRect();
+      zoomAroundClientPoint(handles, factor, e.clientX - rect.left, e.clientY - rect.top);
+    };
+    let panStartClient: { x: number; y: number } | null = null;
+    let panStartCamera: { x: number; y: number } | null = null;
+    const onMouseDown = (e: MouseEvent) => {
+      if (e.button !== 1) return; // middle button only
+      const handles = handlesRef.current;
+      if (!handles) return;
+      e.preventDefault();
+      panStartClient = { x: e.clientX, y: e.clientY };
+      panStartCamera = { x: handles.camera.position.x, y: handles.camera.position.y };
+    };
+    const onMouseMove = (e: MouseEvent) => {
+      if (!panStartClient || !panStartCamera) return;
+      const handles = handlesRef.current;
+      if (!handles) return;
+      const dx = e.clientX - panStartClient.x;
+      const dy = e.clientY - panStartClient.y;
+      handles.camera.position.set(panStartCamera.x + dx, panStartCamera.y + dy);
+    };
+    const onMouseUp = () => {
+      panStartClient = null;
+      panStartCamera = null;
+    };
+    canvas.addEventListener("wheel", onWheel, { passive: false });
+    canvas.addEventListener("mousedown", onMouseDown);
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+
+    const unregister = registerCameraControls({
+      center: () => fitCameraToHost(),
+      zoomBy: (factor) => {
+        const handles = handlesRef.current;
+        if (!handles) return;
+        const r = canvas.getBoundingClientRect();
+        zoomAroundClientPoint(handles, factor, r.width / 2, r.height / 2);
+      },
     });
 
     // Smoke-test hooks. Tauri webview is sealed; safe to expose internals.
@@ -82,7 +137,14 @@ export function Stage() {
       const sp = composeStateRef.current.sprites.get(id);
       if (!sp) return null;
       const g = sp.getGlobalPosition();
-      return { x: g.x, y: g.y };
+      // Undo the camera transform so smoke tests see scene-canvas coordinates
+      // regardless of the current zoom / pan.
+      const cam = handlesRef.current?.camera;
+      if (!cam) return { x: g.x, y: g.y };
+      return {
+        x: (g.x - cam.position.x) / cam.scale.x,
+        y: (g.y - cam.position.y) / cam.scale.y,
+      };
     };
     win.__getOnionCounts = () => {
       let before = 0;
@@ -96,6 +158,11 @@ export function Stage() {
 
     return () => {
       cancelled = true;
+      unregister();
+      canvas.removeEventListener("wheel", onWheel);
+      canvas.removeEventListener("mousedown", onMouseDown);
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
       handlesRef.current?.destroy();
       handlesRef.current = null;
       canvas.remove();
@@ -106,6 +173,44 @@ export function Stage() {
       scaleHandlesRef.current.clear();
     };
   }, []);
+
+  /** Recenter the camera so the project canvas fits in the host element. */
+  function fitCameraToHost() {
+    const handles = handlesRef.current;
+    const host = containerRef.current;
+    if (!handles || !host) return;
+    const rect = host.getBoundingClientRect();
+    const margin = 40;
+    const sx = (rect.width - margin) / handles.canvasWidth;
+    const sy = (rect.height - margin) / handles.canvasHeight;
+    const scale = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, Math.min(sx, sy)));
+    handles.camera.scale.set(scale, scale);
+    handles.camera.position.set(
+      (rect.width - handles.canvasWidth * scale) / 2,
+      (rect.height - handles.canvasHeight * scale) / 2,
+    );
+  }
+
+  /** Multiplicatively zoom the camera while keeping the on-screen point
+   *  (clientX, clientY relative to the canvas) anchored. */
+  function zoomAroundClientPoint(
+    handles: StageHandles,
+    factor: number,
+    clientX: number,
+    clientY: number,
+  ) {
+    const cur = handles.camera.scale.x;
+    const next = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, cur * factor));
+    if (next === cur) return;
+    // Solve for new position so (clientX, clientY) maps to the same world point.
+    // p_world = (clientPos - camera.position) / cur
+    //         = (clientPos - newPosition) / next
+    // → newPosition = clientPos - p_world * next
+    const pWorldX = (clientX - handles.camera.position.x) / cur;
+    const pWorldY = (clientY - handles.camera.position.y) / cur;
+    handles.camera.scale.set(next, next);
+    handles.camera.position.set(clientX - pWorldX * next, clientY - pWorldY * next);
+  }
 
   // Re-render on any store change. drawNow() bails fast if nothing relevant
   // has changed beyond the displayed frame/edits.
@@ -234,12 +339,59 @@ export function Stage() {
     return null;
   }
 
+  /** True if the character that owns `layerId` has clampToCanvas enabled. */
+  function characterClamps(layerId: string): boolean {
+    const s = useStore.getState();
+    if (!s.project) return false;
+    for (const c of s.project.scene.characters) {
+      if (c.layers.some((l) => l.id === layerId)) return !!c.clampToCanvas;
+    }
+    return false;
+  }
+
+  /** If the owning character opts in, clamp `next` (a parent-local proposed
+   *  translation) so the layer's anchored point stays inside the canvas
+   *  rect. Works at any depth: project parent-local → world via Pixi, clamp,
+   *  then back-project. Reads the camera-aware worldTransform from Pixi so
+   *  zoom/pan don't affect the math. */
+  function clampInsideCanvasIfNeeded(sprite: Sprite, layer: Layer, next: Vec2): Vec2 {
+    const handles = handlesRef.current;
+    if (!handles || !characterClamps(layer.id)) return next;
+    const parent = sprite.parent;
+    if (!parent) return next;
+    // Force Pixi to refresh transforms before we read them — drag fires faster
+    // than the next render tick and getGlobalPosition is lazy.
+    const tmp = new Point(next.x, next.y);
+    parent.toGlobal(tmp, tmp, false);
+    // tmp is now in stage-global coords (post-camera). Convert to logical
+    // canvas coords by undoing the camera transform.
+    const cam = handles.camera;
+    const worldX = (tmp.x - cam.position.x) / cam.scale.x;
+    const worldY = (tmp.y - cam.position.y) / cam.scale.y;
+    const cw = handles.canvasWidth;
+    const ch = handles.canvasHeight;
+    const clampedWX = Math.min(cw, Math.max(0, worldX));
+    const clampedWY = Math.min(ch, Math.max(0, worldY));
+    if (clampedWX === worldX && clampedWY === worldY) return next;
+    // Back-project: clamped world → stage-global → parent-local.
+    const back = new Point(
+      clampedWX * cam.scale.x + cam.position.x,
+      clampedWY * cam.scale.y + cam.position.y,
+    );
+    parent.toLocal(back, undefined, back);
+    return { x: back.x, y: back.y };
+  }
+
   function attachDrag(sprite: Sprite, layer: Layer) {
     sprite.on("pointerdown", (e: FederatedPointerEvent) => {
       const handles = handlesRef.current;
       if (!handles) return;
       const parent = sprite.parent;
       if (!parent) return;
+      // Stop the event from bubbling to ancestor sprites — when a child layer
+      // is parented to its parent layer's Sprite, Pixi fires pointerdown on
+      // both, and the parent's handler would otherwise overwrite selection.
+      e.stopPropagation();
       const startParent = parent.toLocal(e.global);
       const s = useStore.getState();
       if (!s.project) return;
@@ -271,11 +423,12 @@ export function Stage() {
       const cur = parent.toLocal(e.global);
       const dx = cur.x - drag.startParent.x;
       const dy = cur.y - drag.startParent.y;
-      const raw: Vec2 = {
+      let next: Vec2 = {
         x: drag.startTranslation.x + dx,
         y: drag.startTranslation.y + dy,
       };
-      const next = clampTranslation(raw, layer.constraints?.translation);
+      next = clampTranslation(next, layer.constraints?.translation);
+      next = clampInsideCanvasIfNeeded(sprite, layer, next);
 
       const s = useStore.getState();
       if (s.mode === "rig") {
