@@ -7,16 +7,24 @@ import { Properties } from "@/panels/Properties";
 import { RigMode } from "@/panels/RigMode";
 import { Stage } from "@/panels/Stage";
 import { Timeline } from "@/panels/Timeline";
+import { Transport } from "@/panels/Transport";
 import { Wardrobe } from "@/panels/Wardrobe";
 import { useStore } from "@/state/store";
 import { frameCount } from "@/state/selectors";
+import { usePlaybackLoop } from "@/state/playback";
 
 export function App() {
+  usePlaybackLoop();
+
   useEffect(() => {
     const unbind = tinykeys(window, {
       Space: (e) => {
         e.preventDefault();
         useStore.getState().captureFrame("all");
+      },
+      "\\": (e) => {
+        e.preventDefault();
+        useStore.getState().togglePlay();
       },
       ArrowLeft: (e) => {
         e.preventDefault();
@@ -29,6 +37,19 @@ export function App() {
         const total = frameCount(s.project);
         s.setFrameIndex(Math.min(total - 1, s.currentFrameIndex + 1));
       },
+      Home: (e) => {
+        e.preventDefault();
+        useStore.getState().setFrameIndex(0);
+      },
+      End: (e) => {
+        e.preventDefault();
+        const s = useStore.getState();
+        s.setFrameIndex(Math.max(0, frameCount(s.project) - 1));
+      },
+      KeyB: (e) => {
+        e.preventDefault();
+        useStore.getState().insertBlank();
+      },
     });
     return () => unbind();
   }, []);
@@ -39,6 +60,7 @@ export function App() {
         <div className="flex items-center gap-3">
           <span className="font-semibold">Frog Animator</span>
           <RigMode />
+          <Transport />
         </div>
         <ProjectSettings />
       </header>

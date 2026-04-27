@@ -5,7 +5,9 @@ import { create } from "zustand";
 import { produce } from "immer";
 import { ulid } from "ulid";
 
-import type { Frame, Project, TargetId, FrameLayerState } from "@/model/types";
+import type { Character, Frame, Project, TargetId, FrameLayerState } from "@/model/types";
+import { resolvePose } from "@/rig/resolve";
+import { allTargetIds } from "@/state/selectors";
 
 export interface EditingBuffer {
   // Pending edits for the current frame, keyed by TargetId. Cleared on capture
@@ -38,6 +40,95 @@ export interface AppState {
 
   /** Commit edits → new Frame inserted after currentFrameIndex. */
   captureFrame: (mode: "all" | "selected") => void;
+  /** Insert an empty frame after currentFrameIndex (== "hold previous"). */
+  insertBlank: () => void;
+}
+
+function eq(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a !== typeof b || a === null || b === null) return false;
+  if (typeof a === "object") {
+    const ak = Object.keys(a as object);
+    const bk = Object.keys(b as object);
+    if (ak.length !== bk.length) return false;
+    for (const k of ak) {
+      if (!eq((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k])) return false;
+    }
+    return true;
+  }
+  return false;
+}
+
+/** Strip fields from `next` that are equal to `base` — produces a sparse delta. */
+function diffFields(
+  base: Required<FrameLayerState>,
+  next: Required<FrameLayerState>,
+): FrameLayerState {
+  const out: FrameLayerState = {};
+  if (!eq(next.translation, base.translation)) out.translation = next.translation;
+  if (!eq(next.rotation, base.rotation)) out.rotation = next.rotation;
+  if (!eq(next.scale, base.scale)) out.scale = next.scale;
+  if (!eq(next.visible, base.visible)) out.visible = next.visible;
+  if (!eq(next.variantId, base.variantId)) out.variantId = next.variantId;
+  if (!eq(next.z, base.z)) out.z = next.z;
+  return out;
+}
+
+function applyEdit(
+  base: Required<FrameLayerState>,
+  edit: FrameLayerState | undefined,
+): Required<FrameLayerState> {
+  if (!edit) return base;
+  return {
+    translation: edit.translation ?? base.translation,
+    rotation: edit.rotation ?? base.rotation,
+    scale: edit.scale ?? base.scale,
+    visible: edit.visible ?? base.visible,
+    variantId: edit.variantId ?? base.variantId,
+    z: edit.z ?? base.z,
+  };
+}
+
+/** Built-in asset id reserved for procedural placeholder textures. */
+export const BUILTIN_FROG_ASSET = "builtin:frog";
+
+function defaultFrog(): Character {
+  const charId = "char-frog";
+  const layerId = "layer-frog-body";
+  const variantId = "variant-frog-default";
+  return {
+    id: charId,
+    name: "Frog",
+    rootTransform: {
+      translation: { x: 0, y: 0 },
+      rotation: 0,
+      scale: { x: 1, y: 1 },
+    },
+    layers: [
+      {
+        id: layerId,
+        name: "Body",
+        parent: null,
+        // Pivot at image center — texture is 256x256 procedurally.
+        pivot: { x: 128, y: 128 },
+        rest: {
+          translation: { x: 640, y: 360 },
+          rotation: 0,
+          scale: { x: 1, y: 1 },
+          visible: true,
+          defaultVariantId: variantId,
+          defaultZ: 0,
+        },
+        wardrobe: [
+          {
+            id: variantId,
+            name: "Default",
+            asset: { assetId: BUILTIN_FROG_ASSET, file: "frog.png" },
+          },
+        ],
+      },
+    ],
+  };
 }
 
 const initialProject = (): Project => ({
@@ -54,7 +145,7 @@ const initialProject = (): Project => ({
   },
   scene: {
     canvas: { width: 1280, height: 720 },
-    characters: [],
+    characters: [defaultFrog()],
     background: null,
     frames: [{ id: ulid(), layers: {} }],
     audio: [],
@@ -91,16 +182,28 @@ export const useStore = create<AppState>((set) => ({
     set(
       produce((s: AppState) => {
         if (!s.project) return;
+        const inherited = resolvePose(s.project, s.currentFrameIndex);
         const frame: Frame = { id: ulid(), layers: {} };
-        const targets =
-          mode === "all"
-            ? (Object.keys(s.editing.edits) as TargetId[])
-            : (s.selection.filter((t) => s.editing.edits[t]) as TargetId[]);
+        const targets: TargetId[] =
+          mode === "all" ? allTargetIds(s.project) : s.selection;
         for (const t of targets) {
-          const e = s.editing.edits[t];
-          if (e && Object.keys(e).length > 0) frame.layers[t] = e;
+          const base = inherited[t];
+          if (!base) continue;
+          const intended = applyEdit(base, s.editing.edits[t]);
+          const delta = diffFields(base, intended);
+          if (Object.keys(delta).length > 0) frame.layers[t] = delta;
         }
         s.project.scene.frames.splice(s.currentFrameIndex + 1, 0, frame);
+        s.currentFrameIndex += 1;
+        s.editing.edits = {};
+      }),
+    ),
+
+  insertBlank: () =>
+    set(
+      produce((s: AppState) => {
+        if (!s.project) return;
+        s.project.scene.frames.splice(s.currentFrameIndex + 1, 0, { id: ulid(), layers: {} });
         s.currentFrameIndex += 1;
         s.editing.edits = {};
       }),
